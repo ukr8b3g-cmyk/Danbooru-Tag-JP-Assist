@@ -35,6 +35,8 @@ git pull
 - Danbooruタグ、自然言語辞書、自分のCSVを併用できます。
 - Hugging Face の Danbooru CSV を起動時に確認し、更新があればローカルの `danbooru_tags.csv` を更新できます。
 
+最大の特徴は `All` モードです。複数のタグファイルや翻訳ファイルを、基本的に重複を抑えながらまとめて読み込み、ひとつの候補リストとして使えます。現在はベータ機能として扱ってください。
+
 Hugging Face がオフライン、または元ファイルが消えている場合は、既存のローカルCSVをそのまま使います。
 
 ## 基本的な使い方
@@ -156,6 +158,8 @@ Restart ComfyUI and hard refresh the browser with `Ctrl + F5`.
 - Supports sorting by match, priority/count, or tag name.
 - Supports local tag files, Hugging Face tag files, or both.
 - Can check the Hugging Face source at startup and download/update the local `danbooru_tags.csv` when the remote file changes.
+
+The main feature is `All` mode. It can load multiple tag files and translation files together, generally suppress duplicate entries, and use them as one combined suggestion list. Treat this as a beta feature for now.
 
 If Hugging Face is offline or the source file disappears, the node keeps using the local saved CSV.
 

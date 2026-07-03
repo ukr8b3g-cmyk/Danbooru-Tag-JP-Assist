@@ -1,8 +1,8 @@
 ﻿import { app } from "/scripts/app.js";
 
-const API_URL = "/danbooru-tag-jp-assist/tags";
-const FILES_API_URL = "/danbooru-tag-jp-assist/files";
-const HF_UPDATE_API_URL = "/danbooru-tag-jp-assist/hf-update";
+const API_URLS = ["/danbooru-tag-jp-assist/tags", "/jp-tag-autocomplete-test/tags"];
+const FILES_API_URLS = ["/danbooru-tag-jp-assist/files", "/jp-tag-autocomplete-test/files"];
+const HF_UPDATE_API_URLS = ["/danbooru-tag-jp-assist/hf-update", "/jp-tag-autocomplete-test/hf-update"];
 const EXT_NAME = "Danbooru.Tag.JP.Assist";
 const SETTINGS = {
   enabled: "DanbooruTagJPAssist.Enabled",
@@ -21,14 +21,14 @@ const SETTINGS = {
 const DEFAULTS = {
   enabled: true,
   maxSuggestions: 10,
-  showAll: false,
+  showAll: true,
   autoComma: true,
   showJapanese: true,
   spacesForUnderscores: true,
   sortOrder: "match",
   tagSource: "both",
-  popupTheme: "gray",
-  tagFile: "danbooru_tags.csv",
+  popupTheme: "cyan",
+  tagFile: "All",
   translationFile: "All",
   autoUpdateHf: true,
 };
@@ -46,20 +46,32 @@ async function loadTags() {
       tag_file: selectedTagFile,
       translation_file: selectedTranslationFile,
     });
-    const url = `${API_URL}?${params.toString()}`;
-    tagCache.set(cacheKey, fetch(url, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { tags: [] }))
-      .then((data) => (Array.isArray(data.tags) ? data.tags : []))
-      .catch(() => []));
+    tagCache.set(cacheKey, fetchFirstJson(API_URLS, params)
+      .then((data) => (Array.isArray(data.tags) ? data.tags : [])));
   }
   return tagCache.get(cacheKey);
 }
 
+async function fetchFirstJson(urls, params = null, options = {}) {
+  for (const baseUrl of urls) {
+    const query = params ? `?${params.toString()}` : "";
+    try {
+      const response = await fetch(`${baseUrl}${query}`, { cache: "no-store", ...options });
+      if (response.ok) return await response.json();
+    } catch {
+      // Try the next route. This keeps renamed folders compatible until ComfyUI restarts.
+    }
+  }
+  return {};
+}
+
 async function loadFileList() {
   if (!fileListCache) {
-    fileListCache = fetch(FILES_API_URL, { cache: "no-store" })
-      .then((r) => (r.ok ? r.json() : { tag_files: ["All"], translation_files: ["All"] }))
-      .catch(() => ({ tag_files: ["All"], translation_files: ["All"] }));
+    fileListCache = fetchFirstJson(FILES_API_URLS)
+      .then((data) => ({
+        tag_files: Array.isArray(data.tag_files) ? data.tag_files : ["All"],
+        translation_files: Array.isArray(data.translation_files) ? data.translation_files : ["All"],
+      }));
   }
   return fileListCache;
 }
@@ -246,26 +258,22 @@ function attachAutocomplete(textarea) {
     items.forEach((item, index) => {
       const row = document.createElement("div");
       row.style.cssText = [
-        "display:grid",
-        "grid-template-columns:minmax(95px,1fr) minmax(160px,1.6fr)",
-        "gap:8px",
+        "display:block",
         "padding:6px 8px",
         "cursor:pointer",
-        "align-items:center",
         index === active ? `background:${colors.active}` : "background:transparent",
       ].join(";");
       const tag = document.createElement("span");
       tag.textContent = item.tag;
-      tag.style.cssText = "font-weight:700;color:#fff;white-space:nowrap";
+      tag.style.cssText = "display:block;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
       const ja = document.createElement("span");
       ja.textContent = splitAlias(item).join(", ");
       ja.title = ja.textContent;
       ja.style.cssText = showJapanese()
-        ? "color:#bde;overflow:hidden;text-overflow:ellipsis;white-space:nowrap"
+        ? "display:block;color:#bde;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px"
         : "display:none";
-      row.style.gridTemplateColumns = showJapanese() ? "minmax(95px,1fr) minmax(160px,1.6fr)" : "1fr";
       row.append(tag);
-      if (showJapanese()) row.append(ja);
+      if (showJapanese() && ja.textContent) row.append(ja);
       row.addEventListener("mousedown", (ev) => {
         ev.preventDefault();
         insertTag(textarea, token, item.tag);
@@ -395,19 +403,19 @@ async function addSettings() {
     defaultValue: DEFAULTS.tagFile,
   });
   app.ui?.settings?.addSetting?.({
-    id: SETTINGS.autoUpdateHf,
-    name: "3. Auto update HF file / HF更新チェック",
-    category: ["Danbooru Tag JP Assist", "Files / ファイル", "3. Auto update HF / HF更新"],
-    type: "boolean",
-    defaultValue: DEFAULTS.autoUpdateHf,
-  });
-  app.ui?.settings?.addSetting?.({
     id: SETTINGS.translationFile,
     name: "2. Translation file / 翻訳ファイル",
     category: ["Danbooru Tag JP Assist", "Files / ファイル", "2. Translation file / 翻訳ファイル"],
     type: "combo",
     options: translationFiles.map((name) => ({ value: name, text: name })),
     defaultValue: DEFAULTS.translationFile,
+  });
+  app.ui?.settings?.addSetting?.({
+    id: SETTINGS.autoUpdateHf,
+    name: "3. Update Danbooru CSV from Hugging Face / Danbooru CSV更新",
+    category: ["Danbooru Tag JP Assist", "Files / ファイル", "3. Danbooru CSV update / CSV更新"],
+    type: "boolean",
+    defaultValue: DEFAULTS.autoUpdateHf,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.popupTheme,
@@ -430,7 +438,7 @@ async function addSettings() {
     type: "combo",
     options: [
       { value: "match", text: "Match first" },
-      { value: "count", text: "Popularity count" },
+      { value: "count", text: "Priority / count" },
       { value: "az", text: "Tag A-Z" },
     ],
     defaultValue: DEFAULTS.sortOrder,
@@ -468,7 +476,7 @@ async function addSettings() {
 async function maybeUpdateHfFile() {
   if (!autoUpdateHf()) return;
   try {
-    await fetch(HF_UPDATE_API_URL, { method: "POST", cache: "no-store" });
+    await fetchFirstJson(HF_UPDATE_API_URLS, null, { method: "POST" });
     fileListCache = null;
     tagCache.clear();
   } catch {

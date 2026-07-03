@@ -121,20 +121,23 @@ def _read_tag_rows(source="both", tag_file="all", translation_file="all"):
 
     hf_files = [hf_path] if os.path.isfile(hf_path) else []
     selected_tag = _safe_csv_name(tag_file)
-    own_candidates = _selected_files(TAG_FILES_DIR, selected_tag or "all")
-    own_files = [
-        path for path in own_candidates
-        if os.path.basename(path) != HF_TAG_FILE
-    ]
-    if not selected_tag:
+    if selected_tag:
+        selected_path = os.path.join(TAG_FILES_DIR, selected_tag)
+        files = [selected_path] if os.path.isfile(selected_path) else []
+    else:
+        own_candidates = _selected_files(TAG_FILES_DIR, "all")
+        own_files = [
+            path for path in own_candidates
+            if os.path.basename(path) != HF_TAG_FILE
+        ]
         own_files += _legacy_csv_files()
 
-    if source == "hf":
-        files = hf_files
-    elif source == "own":
-        files = own_files
-    else:
-        files = hf_files + own_files
+        if source == "hf":
+            files = hf_files
+        elif source == "own":
+            files = own_files
+        else:
+            files = own_files + hf_files
 
     merged = {}
     for path in files:
@@ -219,6 +222,11 @@ async def get_danbooru_tag_jp_assist_tags(request):
     return web.json_response({"tags": _read_tag_rows(source, tag_file, translation_file)})
 
 
+@server.PromptServer.instance.routes.get("/jp-tag-autocomplete-test/tags")
+async def get_legacy_jp_tag_autocomplete_tags(request):
+    return await get_danbooru_tag_jp_assist_tags(request)
+
+
 @server.PromptServer.instance.routes.get("/danbooru-tag-jp-assist/files")
 async def get_danbooru_tag_jp_assist_files(request):
     return web.json_response({
@@ -227,12 +235,22 @@ async def get_danbooru_tag_jp_assist_files(request):
     })
 
 
+@server.PromptServer.instance.routes.get("/jp-tag-autocomplete-test/files")
+async def get_legacy_jp_tag_autocomplete_files(request):
+    return await get_danbooru_tag_jp_assist_files(request)
+
+
 @server.PromptServer.instance.routes.post("/danbooru-tag-jp-assist/hf-update")
 async def update_danbooru_tag_jp_assist_hf_file(request):
     try:
         return web.json_response(_update_hf_tag_file())
     except Exception as e:
         return web.json_response({"updated": False, "error": str(e)}, status=500)
+
+
+@server.PromptServer.instance.routes.post("/jp-tag-autocomplete-test/hf-update")
+async def update_legacy_jp_tag_autocomplete_hf_file(request):
+    return await update_danbooru_tag_jp_assist_hf_file(request)
 
 
 NODE_CLASS_MAPPINGS = {

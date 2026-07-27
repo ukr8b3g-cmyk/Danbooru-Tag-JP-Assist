@@ -1,0 +1,29 @@
+name: Fetch TagComplete Neo upstream
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+jobs:
+  archive:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clone upstream
+        run: git clone --depth 1 https://github.com/eduardoabreu81/sd-webui-tagcomplete-neo.git source
+
+      - name: Prepare archive
+        run: |
+          rm -rf source/.git
+          zip -r sd-webui-tagcomplete-neo-upstream.zip source
+
+      - name: Upload archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: sd-webui-tagcomplete-neo-upstream
+          path: sd-webui-tagcomplete-neo-upstream.zip
+          if-no-files-found: error
+          retention-days: 1

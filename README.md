@@ -123,6 +123,12 @@ CSVを追加・削除したあと、Settings のリストが更新されない�
 - `All` で大きなCSVを複数読むと、単一CSVより重くなる場合があります。
 - タグファイルがない場合、候補ポップアップは表示されません。
 
+## ライセンス
+
+ソースコードは [MIT License](LICENSE) で公開しています。
+
+同梱するタグ・翻訳データには、改変した第三者データが含まれる場合があります。出典と利用条件は [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+
 ---
 
 ## English README
@@ -237,3 +243,9 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - Japanese translation or alias files should be placed under `tags/translation_files/`.
 - Large `All` combinations may be slower than choosing a single CSV.
 - If no tag file is available, no suggestion popup is shown.
+
+## License
+
+The source code is released under the [MIT License](LICENSE).
+
+Bundled tag and translation data may include modified third-party data. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source attribution and usage terms.

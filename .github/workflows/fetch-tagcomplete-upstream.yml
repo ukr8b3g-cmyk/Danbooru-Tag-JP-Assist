@@ -1,6 +1,9 @@
 name: Fetch TagComplete Neo upstream
 
 on:
+  push:
+    branches:
+      - build/tagcomplete-upstream-temp
   pull_request:
     branches:
       - main

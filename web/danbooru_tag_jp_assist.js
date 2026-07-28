@@ -369,58 +369,58 @@ async function addSettings() {
   const translationFiles = Array.isArray(files.translation_files) && files.translation_files.length ? files.translation_files : ["All"];
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.enabled,
-    name: "Enable suggestions / 補完を有効化",
-    category: ["Danbooru Tag JP Assist", "Autocomplete / 補完", "Enable / 有効化"],
+    name: "Enable suggestions",
+    category: ["Danbooru Tag JP Assist", "Autocomplete", "Enable"],
     type: "boolean",
     defaultValue: DEFAULTS.enabled,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.maxSuggestions,
-    name: "Suggestion count / 表示数",
-    category: ["Danbooru Tag JP Assist", "Autocomplete / 補完", "Suggestion count / 表示数"],
+    name: "Suggestion count",
+    category: ["Danbooru Tag JP Assist", "Autocomplete", "Suggestion count"],
     type: "number",
     defaultValue: DEFAULTS.maxSuggestions,
     attrs: { min: 1, max: 200, step: 1 },
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.tagSource,
-    name: "Tag source / タグ元",
-    category: ["Danbooru Tag JP Assist", "Autocomplete / 補完", "Tag source / タグ元"],
+    name: "Tag source",
+    category: ["Danbooru Tag JP Assist", "Autocomplete", "Tag source"],
     type: "combo",
     options: [
       { value: "hf", text: "Hugging Face" },
-      { value: "own", text: "Own tag file / 自分のタグ" },
-      { value: "both", text: "Both / 両方" },
+      { value: "own", text: "Own tag file" },
+      { value: "both", text: "Both" },
     ],
     defaultValue: DEFAULTS.tagSource,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.tagFile,
-    name: "1. Tag file / タグファイル",
-    category: ["Danbooru Tag JP Assist", "Files / ファイル", "1. Tag file / タグファイル"],
+    name: "1. Tag file",
+    category: ["Danbooru Tag JP Assist", "Files", "1. Tag file"],
     type: "combo",
     options: tagFiles.map((name) => ({ value: name, text: name })),
     defaultValue: DEFAULTS.tagFile,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.translationFile,
-    name: "2. Translation file / 翻訳ファイル",
-    category: ["Danbooru Tag JP Assist", "Files / ファイル", "2. Translation file / 翻訳ファイル"],
+    name: "2. Translation file",
+    category: ["Danbooru Tag JP Assist", "Files", "2. Translation file"],
     type: "combo",
     options: translationFiles.map((name) => ({ value: name, text: name })),
     defaultValue: DEFAULTS.translationFile,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.autoUpdateHf,
-    name: "3. Update Danbooru CSV from Hugging Face / Danbooru CSV更新",
-    category: ["Danbooru Tag JP Assist", "Files / ファイル", "3. Danbooru CSV update / CSV更新"],
+    name: "3. Update Danbooru CSV from Hugging Face",
+    category: ["Danbooru Tag JP Assist", "Files", "3. Danbooru CSV update"],
     type: "boolean",
     defaultValue: DEFAULTS.autoUpdateHf,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.popupTheme,
-    name: "Popup color / 候補色",
-    category: ["Danbooru Tag JP Assist", "Display / 表示", "Popup color / 候補色"],
+    name: "Popup color",
+    category: ["Danbooru Tag JP Assist", "Display", "Popup color"],
     type: "combo",
     options: [
       { value: "gray", text: "Gray" },
@@ -433,8 +433,8 @@ async function addSettings() {
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.sortOrder,
-    name: "Sort mode / 並び順",
-    category: ["Danbooru Tag JP Assist", "Autocomplete / 補完", "Sort mode / 並び順"],
+    name: "Sort mode",
+    category: ["Danbooru Tag JP Assist", "Autocomplete", "Sort mode"],
     type: "combo",
     options: [
       { value: "match", text: "Match first" },
@@ -445,29 +445,29 @@ async function addSettings() {
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.showAll,
-    name: "List every match / 全候補表示",
-    category: ["Danbooru Tag JP Assist", "Autocomplete / 補完", "Show all / 全表示"],
+    name: "List every match",
+    category: ["Danbooru Tag JP Assist", "Autocomplete", "Show all"],
     type: "boolean",
     defaultValue: DEFAULTS.showAll,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.autoComma,
-    name: "Append comma / カンマ追加",
-    category: ["Danbooru Tag JP Assist", "Insert / 挿入", "Auto comma / カンマ"],
+    name: "Append comma",
+    category: ["Danbooru Tag JP Assist", "Insert", "Auto comma"],
     type: "boolean",
     defaultValue: DEFAULTS.autoComma,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.showJapanese,
-    name: "Display JP aliases / 日本語表示",
-    category: ["Danbooru Tag JP Assist", "Display / 表示", "Japanese aliases / 日本語"],
+    name: "Display JP aliases",
+    category: ["Danbooru Tag JP Assist", "Display", "Japanese aliases"],
     type: "boolean",
     defaultValue: DEFAULTS.showJapanese,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.spacesForUnderscores,
-    name: "Use spaces for underscores / _を空白に",
-    category: ["Danbooru Tag JP Assist", "Insert / 挿入", "Underscore format / 空白変換"],
+    name: "Use spaces for underscores",
+    category: ["Danbooru Tag JP Assist", "Insert", "Underscore format"],
     type: "boolean",
     defaultValue: DEFAULTS.spacesForUnderscores,
   });

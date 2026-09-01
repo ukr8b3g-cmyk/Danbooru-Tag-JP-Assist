@@ -1,6 +1,9 @@
+import asyncio
 import csv
+import heapq
 import json
 import os
+import threading
 import urllib.request
 
 import server
@@ -15,6 +18,13 @@ HF_TAG_FILE = "danbooru_tags.csv"
 LEGACY_HF_TAG_FILE = "hf_danbooru_tags.csv"
 HF_TAG_URL = "https://huggingface.co/datasets/SpadeA/danbooru-tag-csv/resolve/main/danbooru_tags.csv?download=true"
 HF_META_FILE = os.path.join(TAG_FILES_DIR, ".danbooru_tags_meta.json")
+HF_MAX_BYTES = 128 * 1024 * 1024
+HF_DOWNLOAD_CHUNK = 1024 * 1024
+
+_TAG_CACHE_LOCK = threading.Lock()
+_TAG_CACHE_KEY = None
+_TAG_CACHE_ROWS = None
+_TAG_CACHE_SEARCH = None
 
 
 class DanbooruTagJPAssist:
@@ -79,6 +89,51 @@ def _legacy_csv_files():
     ]
 
 
+def _resolve_tag_files(source="both", tag_file="all"):
+    source = source if source in {"hf", "own", "both"} else "both"
+    hf_path = os.path.join(TAG_FILES_DIR, HF_TAG_FILE)
+    if not os.path.isfile(hf_path):
+        hf_path = os.path.join(DATA_DIR, HF_TAG_FILE)
+
+    hf_files = [hf_path] if os.path.isfile(hf_path) else []
+    selected_tag = _safe_csv_name(tag_file)
+    if selected_tag:
+        selected_path = os.path.join(TAG_FILES_DIR, selected_tag)
+        return [selected_path] if os.path.isfile(selected_path) else []
+
+    own_candidates = _selected_files(TAG_FILES_DIR, "all")
+    own_files = [
+        path for path in own_candidates
+        if os.path.basename(path) != HF_TAG_FILE
+    ]
+    own_files += _legacy_csv_files()
+
+    if source == "hf":
+        return hf_files
+    if source == "own":
+        return own_files
+    return own_files + hf_files
+
+
+def _resolve_translation_files(selected="all"):
+    paths = _selected_files(TRANSLATION_FILES_DIR, selected)
+    if not _safe_csv_name(selected):
+        paths += _legacy_csv_files()
+    return paths
+
+
+def _file_signature(paths):
+    signature = []
+    for path in paths:
+        try:
+            stat = os.stat(path)
+        except OSError:
+            signature.append((path, None, None))
+        else:
+            signature.append((path, stat.st_mtime_ns, stat.st_size))
+    return tuple(signature)
+
+
 def _read_tag_csv(path):
     rows = []
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
@@ -96,11 +151,8 @@ def _read_tag_csv(path):
     return rows
 
 
-def _read_translation_map(selected="all"):
+def _read_translation_map(paths):
     translations = {}
-    paths = _selected_files(TRANSLATION_FILES_DIR, selected)
-    if not _safe_csv_name(selected):
-        paths += _legacy_csv_files()
     for path in paths:
         with open(path, "r", encoding="utf-8-sig", newline="") as f:
             reader = csv.DictReader(f)
@@ -113,44 +165,117 @@ def _read_translation_map(selected="all"):
     return translations
 
 
-def _read_tag_rows(source="both", tag_file="all", translation_file="all"):
+def _normalize(text):
+    return str(text or "").casefold().replace("_", " ").strip()
+
+
+def _split_aliases(row):
+    text = ",".join(value for value in (row.get("ja"), row.get("aliases")) if value)
+    return tuple(
+        _normalize(value)
+        for value in text.replace(";", ",").split(",")
+        if value.strip()
+    )
+
+
+def _count_value(row):
+    try:
+        return int(row.get("count") or 0)
+    except (TypeError, ValueError):
+        try:
+            return int(float(row.get("count") or 0))
+        except (TypeError, ValueError):
+            return 0
+
+
+def _clear_tag_cache():
+    global _TAG_CACHE_KEY, _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH
+    with _TAG_CACHE_LOCK:
+        _TAG_CACHE_KEY = None
+        _TAG_CACHE_ROWS = None
+        _TAG_CACHE_SEARCH = None
+
+
+def _load_cached_tag_data(source="both", tag_file="all", translation_file="all"):
+    global _TAG_CACHE_KEY, _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH
+
     source = source if source in {"hf", "own", "both"} else "both"
-    hf_path = os.path.join(TAG_FILES_DIR, HF_TAG_FILE)
-    if not os.path.isfile(hf_path):
-        hf_path = os.path.join(DATA_DIR, HF_TAG_FILE)
+    tag_paths = _resolve_tag_files(source, tag_file)
+    translation_paths = _resolve_translation_files(translation_file)
+    cache_key = (
+        source,
+        _safe_csv_name(tag_file) or "all",
+        _safe_csv_name(translation_file) or "all",
+        _file_signature(tag_paths),
+        _file_signature(translation_paths),
+    )
 
-    hf_files = [hf_path] if os.path.isfile(hf_path) else []
-    selected_tag = _safe_csv_name(tag_file)
-    if selected_tag:
-        selected_path = os.path.join(TAG_FILES_DIR, selected_tag)
-        files = [selected_path] if os.path.isfile(selected_path) else []
-    else:
-        own_candidates = _selected_files(TAG_FILES_DIR, "all")
-        own_files = [
-            path for path in own_candidates
-            if os.path.basename(path) != HF_TAG_FILE
+    with _TAG_CACHE_LOCK:
+        if cache_key == _TAG_CACHE_KEY and _TAG_CACHE_ROWS is not None:
+            return _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH
+
+        merged = {}
+        for path in tag_paths:
+            for row in _read_tag_csv(path):
+                merged[row["tag"]] = row
+
+        translations = _read_translation_map(translation_paths)
+        for tag, text in translations.items():
+            if tag in merged:
+                merged[tag]["ja"] = text["ja"]
+                merged[tag]["aliases"] = text["aliases"]
+
+        rows = list(merged.values())
+        search_rows = [
+            (row, _normalize(row["tag"]), _split_aliases(row), _count_value(row))
+            for row in rows
         ]
-        own_files += _legacy_csv_files()
 
-        if source == "hf":
-            files = hf_files
-        elif source == "own":
-            files = own_files
-        else:
-            files = own_files + hf_files
+        _TAG_CACHE_KEY = cache_key
+        _TAG_CACHE_ROWS = rows
+        _TAG_CACHE_SEARCH = search_rows
+        return rows, search_rows
 
-    merged = {}
-    for path in files:
-        for row in _read_tag_csv(path):
-            merged[row["tag"]] = row
 
-    translations = _read_translation_map(translation_file)
-    for tag, text in translations.items():
-        if tag in merged:
-            merged[tag]["ja"] = text["ja"]
-            merged[tag]["aliases"] = text["aliases"]
+def _read_tag_rows(source="both", tag_file="all", translation_file="all"):
+    rows, _ = _load_cached_tag_data(source, tag_file, translation_file)
+    return rows
 
-    return list(merged.values())
+
+def _search_tag_rows(query, source="both", tag_file="all", translation_file="all", sort_order="match", limit=20):
+    query = _normalize(query)
+    if not query:
+        return []
+
+    try:
+        limit = max(1, min(500, int(limit)))
+    except (TypeError, ValueError):
+        limit = 20
+
+    sort_order = sort_order if sort_order in {"match", "count", "az"} else "match"
+    _, search_rows = _load_cached_tag_data(source, tag_file, translation_file)
+
+    def scored_rows():
+        for row, tag, aliases, count in search_rows:
+            if tag == query or query in aliases:
+                score = 0
+            elif tag.startswith(query) or any(alias.startswith(query) for alias in aliases):
+                score = 1
+            elif query in tag or any(query in alias for alias in aliases):
+                score = 2
+            else:
+                continue
+
+            tag_name = str(row["tag"]).casefold()
+            if sort_order == "count":
+                key = (-count, score, tag_name)
+            elif sort_order == "az":
+                key = (tag_name, score, -count)
+            else:
+                key = (score, -count, tag_name)
+            yield key, row
+
+    return [row for _, row in heapq.nsmallest(limit, scored_rows(), key=lambda item: item[0])]
 
 
 def _load_hf_meta():
@@ -170,24 +295,60 @@ def _save_hf_meta(meta):
 def _hf_remote_meta():
     request = urllib.request.Request(HF_TAG_URL, method="HEAD")
     with urllib.request.urlopen(request, timeout=20) as response:
+        content_length = response.headers.get("Content-Length", "")
+        if content_length:
+            try:
+                if int(content_length) > HF_MAX_BYTES:
+                    raise ValueError("Remote Danbooru CSV exceeds the 128 MiB safety limit.")
+            except ValueError:
+                if content_length.isdigit():
+                    raise
         return {
             "etag": response.headers.get("ETag", ""),
             "last_modified": response.headers.get("Last-Modified", ""),
-            "content_length": response.headers.get("Content-Length", ""),
+            "content_length": content_length,
             "url": HF_TAG_URL,
         }
+
+
+def _validate_downloaded_tag_file(path):
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.DictReader(f)
+        fields = set(reader.fieldnames or [])
+        if not ({"tag", "english"} & fields):
+            raise ValueError("Downloaded CSV does not contain a tag or english column.")
 
 
 def _download_hf_tag_file(remote_meta):
     os.makedirs(TAG_FILES_DIR, exist_ok=True)
     path = os.path.join(TAG_FILES_DIR, HF_TAG_FILE)
     tmp_path = path + ".tmp"
-    with urllib.request.urlopen(HF_TAG_URL, timeout=60) as response:
-        with open(tmp_path, "wb") as f:
-            f.write(response.read())
-    os.replace(tmp_path, path)
+    total = 0
+
+    try:
+        with urllib.request.urlopen(HF_TAG_URL, timeout=60) as response:
+            with open(tmp_path, "wb") as f:
+                while True:
+                    chunk = response.read(HF_DOWNLOAD_CHUNK)
+                    if not chunk:
+                        break
+                    total += len(chunk)
+                    if total > HF_MAX_BYTES:
+                        raise ValueError("Downloaded Danbooru CSV exceeds the 128 MiB safety limit.")
+                    f.write(chunk)
+
+        _validate_downloaded_tag_file(tmp_path)
+        os.replace(tmp_path, path)
+    except Exception:
+        try:
+            os.remove(tmp_path)
+        except OSError:
+            pass
+        raise
+
     remote_meta["local_size"] = str(os.path.getsize(path))
     _save_hf_meta(remote_meta)
+    _clear_tag_cache()
     return remote_meta
 
 
@@ -202,12 +363,14 @@ def _update_hf_tag_file():
             "error": str(e),
             "using_existing": os.path.isfile(path),
         }
+
     local_meta = _load_hf_meta()
     needs_update = not os.path.isfile(path)
     for key in ("etag", "last_modified", "content_length"):
         if remote_meta.get(key) and remote_meta.get(key) != local_meta.get(key):
             needs_update = True
             break
+
     if needs_update:
         meta = _download_hf_tag_file(remote_meta)
         return {"updated": True, "file": HF_TAG_FILE, "meta": meta}
@@ -219,7 +382,25 @@ async def get_danbooru_tag_jp_assist_tags(request):
     source = request.query.get("source", "both")
     tag_file = request.query.get("tag_file", "all")
     translation_file = request.query.get("translation_file", "all")
-    return web.json_response({"tags": _read_tag_rows(source, tag_file, translation_file)})
+    query = request.query.get("q", "")
+
+    if query:
+        sort_order = request.query.get("sort", "match")
+        limit = request.query.get("limit", "20")
+        tags = await asyncio.to_thread(
+            _search_tag_rows,
+            query,
+            source,
+            tag_file,
+            translation_file,
+            sort_order,
+            limit,
+        )
+    else:
+        # Keep the no-query response for compatibility with older frontends.
+        tags = await asyncio.to_thread(_read_tag_rows, source, tag_file, translation_file)
+
+    return web.json_response({"tags": tags})
 
 
 @server.PromptServer.instance.routes.get("/jp-tag-autocomplete-test/tags")
@@ -243,7 +424,8 @@ async def get_legacy_jp_tag_autocomplete_files(request):
 @server.PromptServer.instance.routes.post("/danbooru-tag-jp-assist/hf-update")
 async def update_danbooru_tag_jp_assist_hf_file(request):
     try:
-        return web.json_response(_update_hf_tag_file())
+        result = await asyncio.to_thread(_update_hf_tag_file)
+        return web.json_response(result)
     except Exception as e:
         return web.json_response({"updated": False, "error": str(e)}, status=500)
 

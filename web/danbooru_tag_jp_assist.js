@@ -32,24 +32,31 @@ const DEFAULTS = {
   translationFile: "All",
   autoUpdateHf: true,
 };
-const tagCache = new Map();
+const resultCache = new Map();
 let fileListCache = null;
 
-async function loadTags() {
+async function loadTags(query) {
   const source = tagSource();
   const selectedTagFile = selectedTagFileName();
   const selectedTranslationFile = selectedTranslationFileName();
-  const cacheKey = `${source}|${selectedTagFile}|${selectedTranslationFile}`;
-  if (!tagCache.has(cacheKey)) {
+  const sort = sortOrder();
+  const limit = showAllSuggestions() ? 500 : maxSuggestions();
+  const cacheKey = `${source}|${selectedTagFile}|${selectedTranslationFile}|${sort}|${limit}|${query}`;
+
+  if (!resultCache.has(cacheKey)) {
     const params = new URLSearchParams({
       source,
       tag_file: selectedTagFile,
       translation_file: selectedTranslationFile,
+      sort,
+      limit: String(limit),
+      q: query,
     });
-    tagCache.set(cacheKey, fetchFirstJson(API_URLS, params)
+    if (resultCache.size >= 200) resultCache.clear();
+    resultCache.set(cacheKey, fetchFirstJson(API_URLS, params)
       .then((data) => (Array.isArray(data.tags) ? data.tags : [])));
   }
-  return tagCache.get(cacheKey);
+  return resultCache.get(cacheKey);
 }
 
 async function fetchFirstJson(urls, params = null, options = {}) {
@@ -74,10 +81,6 @@ async function loadFileList() {
       }));
   }
   return fileListCache;
-}
-
-function normalize(text) {
-  return String(text || "").toLowerCase().replace(/_/g, " ").trim();
 }
 
 function getSetting(id, fallback) {
@@ -172,8 +175,7 @@ function insertTag(textarea, token, tag) {
 }
 
 function shouldAttach(el) {
-  if (!el || el.tagName !== "TEXTAREA") return false;
-  if (!isEnabled()) return false;
+  if (!(el instanceof HTMLTextAreaElement)) return false;
   if (el.readOnly || el.disabled) return false;
   if (el.closest(".jp-tag-ac-popup")) return false;
   return true;
@@ -210,31 +212,6 @@ function splitAlias(item) {
     .filter(Boolean);
 }
 
-function scoreItem(item, query) {
-  const q = normalize(query);
-  const tag = normalize(item.tag);
-  const aliases = splitAlias(item).map(normalize);
-  if (tag === q || aliases.includes(q)) return 0;
-  if (tag.startsWith(q) || aliases.some((a) => a.startsWith(q))) return 1;
-  if (tag.includes(q) || aliases.some((a) => a.includes(q))) return 2;
-  return 99;
-}
-
-function countValue(item) {
-  return Number(item.count) || 0;
-}
-
-function compareSuggestions(a, b) {
-  const order = sortOrder();
-  if (order === "count") {
-    return countValue(b.item) - countValue(a.item) || a.score - b.score || String(a.item.tag).localeCompare(String(b.item.tag));
-  }
-  if (order === "az") {
-    return String(a.item.tag).localeCompare(String(b.item.tag)) || a.score - b.score || countValue(b.item) - countValue(a.item);
-  }
-  return a.score - b.score || countValue(b.item) - countValue(a.item) || String(a.item.tag).localeCompare(String(b.item.tag));
-}
-
 function attachAutocomplete(textarea) {
   if (!shouldAttach(textarea) || textarea.__jpTagAutocompleteAttached) return;
   textarea.__jpTagAutocompleteAttached = true;
@@ -243,6 +220,7 @@ function attachAutocomplete(textarea) {
   let items = [];
   let active = 0;
   let token = null;
+  let requestSerial = 0;
 
   function hide() {
     popup.style.display = "none";
@@ -284,10 +262,12 @@ function attachAutocomplete(textarea) {
   }
 
   async function update() {
+    const serial = ++requestSerial;
     if (!isEnabled()) {
       hide();
       return;
     }
+
     token = currentToken(textarea);
     const query = token.text;
     if (!query) {
@@ -295,14 +275,10 @@ function attachAutocomplete(textarea) {
       return;
     }
 
-    const tags = await loadTags();
-    items = tags
-      .map((item) => ({ item, score: scoreItem(item, query) }))
-      .filter((x) => x.score < 99)
-      .sort(compareSuggestions)
-      .slice(0, showAllSuggestions() ? 500 : maxSuggestions())
-      .map((x) => x.item);
+    const tags = await loadTags(query);
+    if (serial !== requestSerial || document.activeElement !== textarea) return;
 
+    items = tags;
     if (!items.length) {
       hide();
       return;
@@ -319,7 +295,10 @@ function attachAutocomplete(textarea) {
 
   textarea.addEventListener("input", update);
   textarea.addEventListener("focus", update);
-  textarea.addEventListener("blur", () => setTimeout(hide, 120));
+  textarea.addEventListener("blur", () => {
+    requestSerial += 1;
+    setTimeout(hide, 120);
+  });
   document.addEventListener("mousedown", (ev) => {
     if (ev.target === textarea || popup.contains(ev.target)) return;
     hide();
@@ -344,23 +323,11 @@ function attachAutocomplete(textarea) {
   });
 }
 
-function attachAllTextareas(root = document) {
-  root.querySelectorAll?.("textarea")?.forEach(attachAutocomplete);
-}
-
-function startObserver() {
-  attachAllTextareas();
-  const observer = new MutationObserver((mutations) => {
-    for (const mutation of mutations) {
-      for (const node of mutation.addedNodes) {
-        if (node.nodeType !== Node.ELEMENT_NODE) continue;
-        if (node.tagName === "TEXTAREA") attachAutocomplete(node);
-        attachAllTextareas(node);
-      }
-    }
-  });
-  observer.observe(document.body, { childList: true, subtree: true });
-  window.addEventListener("focus", () => attachAllTextareas());
+function attachNodeTextareas(node) {
+  for (const widget of node?.widgets || []) {
+    const el = widget?.element ?? widget?.inputEl;
+    if (el instanceof HTMLTextAreaElement) attachAutocomplete(el);
+  }
 }
 
 async function addSettings() {
@@ -478,7 +445,7 @@ async function maybeUpdateHfFile() {
   try {
     await fetchFirstJson(HF_UPDATE_API_URLS, null, { method: "POST" });
     fileListCache = null;
-    tagCache.clear();
+    resultCache.clear();
   } catch {
     // Network or server errors should not block normal autocomplete use.
   }
@@ -490,8 +457,10 @@ app.registerExtension({
     await maybeUpdateHfFile();
     await addSettings();
   },
-  setup() {
-    startObserver();
+  nodeCreated(node) {
+    attachNodeTextareas(node);
+  },
+  loadedGraphNode(node) {
+    attachNodeTextareas(node);
   },
 });
-

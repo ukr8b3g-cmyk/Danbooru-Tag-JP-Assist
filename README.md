@@ -1,6 +1,6 @@
 # Danbooru Tag JP Assist
 
-Danbooru Tag JP Assist は、ComfyUI の複数行テキスト入力欄でタグ候補を表示する補完ノードです。
+Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄でタグ候補を表示する補完ノードです。
 
 日本語で検索しながら、英語タグや英語の自然言語ワードをプロンプトへ入力できます。
 
@@ -26,7 +26,7 @@ git pull
 
 ## できること
 
-- 複数行テキスト欄でタグ候補を表示します。
+- ComfyUI ノードの複数行テキスト欄でタグ候補を表示します。
 - 日本語の別名や翻訳から英語タグを検索できます。
 - 英語タグをプロンプトへ挿入します。
 - `_` を空白に置き換えて、Krea系の自然言語プロンプト風に入力できます。
@@ -34,6 +34,7 @@ git pull
 - 一致順、優先度/count順、A-Z順で並び替えできます。
 - Danbooruタグ、自然言語辞書、自分のCSVを併用できます。
 - Hugging Face の Danbooru CSV を起動時に確認し、更新があればローカルの `danbooru_tags.csv` を更新できます。
+- 検索はサーバー側で行い、必要な候補だけをブラウザへ返します。
 
 最大の特徴は `All` モードです。複数のタグファイルや翻訳ファイルを、基本的に重複を抑えながらまとめて読み込み、ひとつの候補リストとして使えます。現在はベータ機能として扱ってください。
 
@@ -44,18 +45,19 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 1. ComfyUI の Settings を開きます。
 2. `Danbooru Tag JP Assist` を有効にします。
 3. まずは `Tag file: All`、`Translation file: All` のまま使います。
-4. 複数行プロンプト欄に英語または日本語を入力します。
+4. ノードの複数行プロンプト欄に英語または日本語を入力します。
 5. 候補をキーボードまたはマウスで選択します。
 
 初期設定では以下の動作になります。
 
-- `Tag file: All` は同梱の自然言語辞書と、ローカルにある Danbooru CSV を読みます。
-- `Translation file: All` は同梱の翻訳CSVを両方読みます。
+- `Tag file: All` は `tags/tag_files/` 内の同梱CSVと、ローカルにある Danbooru CSV を読みます。
+- `Translation file: All` は同梱の翻訳CSVをまとめて読みます。
 - `Tag source: Both` はローカルファイルと Hugging Face 由来の Danbooru CSV を併用します。
 - 同じタグが複数ファイルにある場合は、Danbooru CSV 側を優先します。
 - `natural_language_tags.csv` は軽量な英語辞書・プロンプト語彙です。Danbooruタグの代替ではありません。
 - `merged_translations_dedup.csv` は Danbooru タグ用の日本語別名です。
 - `natural_language_ja.csv` は自然言語辞書用の日本語別名です。
+- CSVはサーバー側でキャッシュされます。大きな `All` 構成では最初の検索だけ読み込みに時間がかかる場合があります。
 
 ## ファイル構成
 
@@ -64,9 +66,16 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 - `tags/tag_files/`: 英語タグ・英語辞書CSVを置くフォルダー
 - `tags/translation_files/`: 日本語翻訳・別名CSVを置くフォルダー
 
-同梱ファイル:
+現在の同梱タグファイル:
 
+- `tags/tag_files/anima_artists.csv`
+- `tags/tag_files/anima_characters.csv`
+- `tags/tag_files/danbooru_2025.csv`
+- `tags/tag_files/e621.csv`
 - `tags/tag_files/natural_language_tags.csv`: 軽量な英語辞書・プロンプト語彙
+
+同梱翻訳ファイル:
+
 - `tags/translation_files/natural_language_ja.csv`: 自然言語辞書の一部に対応した日本語別名
 - `tags/translation_files/merged_translations_dedup.csv`: Danbooruタグ用の日本語別名
 
@@ -105,7 +114,7 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - `Tag file`: `tags/tag_files/` 内の1ファイル、または `All`。初期値は `All` です。
 - `Translation file`: `tags/translation_files/` 内の1ファイル、または `All`。
 - `Update Danbooru CSV from Hugging Face`: Hugging Face 側を確認し、変更があれば `danbooru_tags.csv` を更新します。
-- `List every match`: 候補を多めに表示します。
+- `List every match`: 候補を多めに表示します。上限は500件です。
 - `Suggestion count`: `List every match` がOFFの時の表示数です。
 - `Sort mode`: `Match first`、`Priority / count`、`Tag A-Z`。
 - `Popup color`: 候補ポップアップの色です。
@@ -116,11 +125,14 @@ CSVを追加・削除したあと、Settings のリストが更新されない�
 
 ## 注意
 
+- 補完対象は ComfyUI ノードに属する複数行テキスト欄です。Settings や一般的なモーダル内の textarea には取り付けません。
 - GitHubリポジトリには `danbooru_tags.csv` を含めません。
 - ダウンロード済みの `danbooru_tags.csv` は、元のファイル名と内容を維持します。
+- Hugging Face からの更新は一時ファイルへストリーミング保存し、CSVヘッダーを確認してから置き換えます。
+- Hugging Face から自動取得するCSVには128 MiBの上限を設けています。
 - 自分のタグファイルは `tags/tag_files/` に置いてください。
 - 自分の翻訳・別名ファイルは `tags/translation_files/` に置いてください。
-- `All` で大きなCSVを複数読むと、単一CSVより重くなる場合があります。
+- `All` で大きなCSVを複数読む場合、初回検索時は単一CSVより読み込みに時間がかかる場合があります。
 - タグファイルがない場合、候補ポップアップは表示されません。
 
 ## ライセンス
@@ -133,7 +145,7 @@ CSVを追加・削除したあと、Settings のリストが更新されない�
 
 ## English README
 
-Danbooru Tag JP Assist adds tag suggestions to ComfyUI multiline text areas.
+Danbooru Tag JP Assist adds tag suggestions to multiline text areas that belong to ComfyUI nodes.
 
 It is intended for users who want to search English Danbooru tags and English prompt vocabulary with optional Japanese aliases.
 
@@ -157,13 +169,14 @@ Restart ComfyUI and hard refresh the browser with `Ctrl + F5`.
 
 ## What It Does
 
-- Shows suggestions while typing in multiline text boxes.
+- Shows suggestions while typing in multiline text boxes that belong to ComfyUI nodes.
 - Inserts English tags into the prompt.
 - Can display Japanese aliases next to suggestions.
 - Can insert spaces instead of underscores for Krea-style natural prompts.
 - Supports sorting by match, priority/count, or tag name.
 - Supports local tag files, Hugging Face tag files, or both.
 - Can check the Hugging Face source at startup and download/update the local `danbooru_tags.csv` when the remote file changes.
+- Performs matching on the server and sends only the requested suggestions to the browser.
 
 The main feature is `All` mode. It can load multiple tag files and translation files together, generally suppress duplicate entries, and use them as one combined suggestion list. Treat this as a beta feature for now.
 
@@ -174,18 +187,19 @@ If Hugging Face is offline or the source file disappears, the node keeps using t
 1. Open ComfyUI Settings.
 2. Enable `Danbooru Tag JP Assist`.
 3. Use the default `Tag file: All` and `Translation file: All` first.
-4. Type English or Japanese text in a multiline prompt box.
+4. Type English or Japanese text in a multiline prompt box on a node.
 5. Select a suggestion with the keyboard or mouse.
 
 Default behavior:
 
-- `Tag file: All` loads the bundled natural language dictionary and the local Danbooru CSV if available.
-- `Translation file: All` loads both bundled translation files.
+- `Tag file: All` loads bundled CSV files under `tags/tag_files/` plus the local Danbooru CSV when available.
+- `Translation file: All` loads the bundled translation CSV files together.
 - `Tag source: Both` uses local files and the Hugging Face Danbooru CSV together.
 - If the same tag exists in multiple files, the Danbooru CSV wins.
 - `natural_language_tags.csv` is a lightweight English dictionary and prompt vocabulary, not a Danbooru tag replacement.
 - `merged_translations_dedup.csv` is for Danbooru tag Japanese aliases.
 - `natural_language_ja.csv` is only for the natural language dictionary.
+- CSV data is cached on the server. A large `All` configuration may take longer on the first search while the cache is built.
 
 ## Tag Files
 
@@ -194,9 +208,16 @@ Use two separate folders:
 - `tags/tag_files/`: English tag files.
 - `tags/translation_files/`: Japanese translation or alias files.
 
-Bundled files:
+Currently bundled tag files:
 
-- `tags/tag_files/natural_language_tags.csv`: lightweight English dictionary and prompt vocabulary.
+- `tags/tag_files/anima_artists.csv`
+- `tags/tag_files/anima_characters.csv`
+- `tags/tag_files/danbooru_2025.csv`
+- `tags/tag_files/e621.csv`
+- `tags/tag_files/natural_language_tags.csv`: lightweight English dictionary and prompt vocabulary
+
+Bundled translation files:
+
 - `tags/translation_files/natural_language_ja.csv`: Japanese aliases for part of the natural language dictionary.
 - `tags/translation_files/merged_translations_dedup.csv`: Japanese aliases for Danbooru tags.
 
@@ -227,7 +248,7 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - `Tag file`: one file in `tags/tag_files/` or `All`. The default is `All`.
 - `Translation file`: one file in `tags/translation_files/` or `All`.
 - `Update Danbooru CSV from Hugging Face`: checks and updates `danbooru_tags.csv`.
-- `List every match`: shows a larger result list.
+- `List every match`: shows a larger result list, capped at 500 suggestions.
 - `Suggestion count`: limits displayed suggestions when `List every match` is off.
 - `Sort mode`: `Match first`, `Priority / count`, or `Tag A-Z`.
 - `Popup color`: changes the suggestion popup color.
@@ -236,12 +257,14 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 
 ## Notes
 
+- Autocomplete is attached to multiline text areas owned by ComfyUI nodes, not general Settings or modal text areas.
 - The GitHub repository does not include `danbooru_tags.csv`.
 - The downloaded `danbooru_tags.csv` keeps the original filename and original content.
-- The natural language tag file and both translation files are bundled with the repository.
+- Hugging Face updates are streamed into a temporary file and the CSV header is validated before replacement.
+- Automatically downloaded CSV files are limited to 128 MiB.
 - User tag files should be placed under `tags/tag_files/`.
 - Japanese translation or alias files should be placed under `tags/translation_files/`.
-- Large `All` combinations may be slower than choosing a single CSV.
+- Large `All` combinations may take longer on the first search than choosing a single CSV.
 - If no tag file is available, no suggestion popup is shown.
 
 ## License

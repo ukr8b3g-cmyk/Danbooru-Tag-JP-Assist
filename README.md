@@ -4,7 +4,16 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 日本語で検索しながら、英語タグや英語の自然言語ワードをプロンプトへ入力できます。
 
+**Version: 1.0.1**
+
 [English README](#english-readme)
+
+## v1.0.1
+
+- 入力ごとの検索を 80 ms デバウンスし、連続入力時の無駄な検索を抑えます。
+- 候補取得・表示の上限を 500 件から 50 件へ変更しました。
+- `Match first` 検索で先頭1〜2文字の Prefix Index を使い、十分な prefix 候補がある場合は全件走査を回避します。
+- substring 検索は従来どおり維持します。
 
 ## インストール
 
@@ -114,8 +123,8 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - `Tag file`: `tags/tag_files/` 内の1ファイル、または `All`。初期値は `All` です。
 - `Translation file`: `tags/translation_files/` 内の1ファイル、または `All`。
 - `Update Danbooru CSV from Hugging Face`: Hugging Face 側を確認し、変更があれば `danbooru_tags.csv` を更新します。
-- `List every match`: 候補を多めに表示します。上限は500件です。
-- `Suggestion count`: `List every match` がOFFの時の表示数です。
+- `List every match`: 候補を多めに表示します。上限は50件です。
+- `Suggestion count`: `List every match` がOFFの時の表示数です。上限は50件です。
 - `Sort mode`: `Match first`、`Priority / count`、`Tag A-Z`。
 - `Popup color`: 候補ポップアップの色です。
 - `Use spaces for underscores`: `long_hair` を `long hair` として挿入します。
@@ -148,6 +157,15 @@ CSVを追加・削除したあと、Settings のリストが更新されない�
 Danbooru Tag JP Assist adds tag suggestions to multiline text areas that belong to ComfyUI nodes.
 
 It is intended for users who want to search English Danbooru tags and English prompt vocabulary with optional Japanese aliases.
+
+**Version: 1.0.1**
+
+## v1.0.1
+
+- Adds an 80 ms debounce before autocomplete searches to suppress redundant requests while typing.
+- Reduces the maximum fetched/displayed suggestion count from 500 to 50.
+- Adds a one-to-two-character Prefix Index for `Match first`; when enough prefix matches exist, a full-row scan is avoided.
+- Keeps substring matching as a compatibility fallback.
 
 ## Installation
 
@@ -248,8 +266,8 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - `Tag file`: one file in `tags/tag_files/` or `All`. The default is `All`.
 - `Translation file`: one file in `tags/translation_files/` or `All`.
 - `Update Danbooru CSV from Hugging Face`: checks and updates `danbooru_tags.csv`.
-- `List every match`: shows a larger result list, capped at 500 suggestions.
-- `Suggestion count`: limits displayed suggestions when `List every match` is off.
+- `List every match`: shows a larger result list, capped at 50 suggestions.
+- `Suggestion count`: limits displayed suggestions when `List every match` is off, capped at 50.
 - `Sort mode`: `Match first`, `Priority / count`, or `Tag A-Z`.
 - `Popup color`: changes the suggestion popup color.
 - `Use spaces for underscores`: inserts `long hair` instead of `long_hair`.

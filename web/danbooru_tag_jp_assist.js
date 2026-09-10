@@ -36,6 +36,7 @@ const DEFAULTS = {
 };
 const resultCache = new Map();
 let fileListCache = null;
+let dynamicTextareaListenerInstalled = false;
 
 async function loadTags(query) {
   const source = tagSource();
@@ -349,6 +350,25 @@ function attachNodeTextareas(node) {
   }
 }
 
+function attachRenderedTextareas(root = document) {
+  root.querySelectorAll?.("textarea.comfy-multiline-input").forEach((el) => {
+    attachAutocomplete(el);
+  });
+}
+
+function installDynamicTextareaAttachment() {
+  if (dynamicTextareaListenerInstalled) return;
+  dynamicTextareaListenerInstalled = true;
+
+  attachRenderedTextareas();
+  document.addEventListener("focusin", (ev) => {
+    const el = ev.target;
+    if (el instanceof HTMLTextAreaElement && el.classList.contains("comfy-multiline-input")) {
+      attachAutocomplete(el);
+    }
+  });
+}
+
 async function addSettings() {
   const files = await loadFileList();
   const tagFiles = Array.isArray(files.tag_files) && files.tag_files.length ? files.tag_files : ["All"];
@@ -476,10 +496,15 @@ app.registerExtension({
     await maybeUpdateHfFile();
     await addSettings();
   },
+  setup() {
+    installDynamicTextareaAttachment();
+  },
   nodeCreated(node) {
     attachNodeTextareas(node);
+    requestAnimationFrame(() => attachNodeTextareas(node));
   },
   loadedGraphNode(node) {
     attachNodeTextareas(node);
+    requestAnimationFrame(() => attachNodeTextareas(node));
   },
 });

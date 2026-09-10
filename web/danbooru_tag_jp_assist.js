@@ -4,8 +4,6 @@ const API_URLS = ["/danbooru-tag-jp-assist/tags", "/jp-tag-autocomplete-test/tag
 const FILES_API_URLS = ["/danbooru-tag-jp-assist/files", "/jp-tag-autocomplete-test/files"];
 const HF_UPDATE_API_URLS = ["/danbooru-tag-jp-assist/hf-update", "/jp-tag-autocomplete-test/hf-update"];
 const EXT_NAME = "Danbooru.Tag.JP.Assist";
-const AUTOCOMPLETE_DEBOUNCE_MS = 80;
-const MAX_SERVER_RESULTS = 50;
 const SETTINGS = {
   enabled: "DanbooruTagJPAssist.Enabled",
   maxSuggestions: "DanbooruTagJPAssist.MaxSuggestions",
@@ -42,7 +40,7 @@ async function loadTags(query) {
   const selectedTagFile = selectedTagFileName();
   const selectedTranslationFile = selectedTranslationFileName();
   const sort = sortOrder();
-  const limit = showAllSuggestions() ? MAX_SERVER_RESULTS : maxSuggestions();
+  const limit = showAllSuggestions() ? 500 : maxSuggestions();
   const cacheKey = `${source}|${selectedTagFile}|${selectedTranslationFile}|${sort}|${limit}|${query}`;
 
   if (!resultCache.has(cacheKey)) {
@@ -102,9 +100,7 @@ function isEnabled() {
 
 function maxSuggestions() {
   const value = Number(getSetting(SETTINGS.maxSuggestions, DEFAULTS.maxSuggestions));
-  return Number.isFinite(value)
-    ? Math.max(1, Math.min(MAX_SERVER_RESULTS, Math.floor(value)))
-    : DEFAULTS.maxSuggestions;
+  return Number.isFinite(value) ? Math.max(1, Math.floor(value)) : DEFAULTS.maxSuggestions;
 }
 
 function showAllSuggestions() {
@@ -225,7 +221,6 @@ function attachAutocomplete(textarea) {
   let active = 0;
   let token = null;
   let requestSerial = 0;
-  let updateTimer = null;
 
   function hide() {
     popup.style.display = "none";
@@ -266,7 +261,8 @@ function attachAutocomplete(textarea) {
     });
   }
 
-  async function update(serial) {
+  async function update() {
+    const serial = ++requestSerial;
     if (!isEnabled()) {
       hide();
       return;
@@ -297,25 +293,10 @@ function attachAutocomplete(textarea) {
     render();
   }
 
-  function scheduleUpdate() {
-    const serial = ++requestSerial;
-    if (updateTimer !== null) {
-      clearTimeout(updateTimer);
-    }
-    updateTimer = setTimeout(() => {
-      updateTimer = null;
-      void update(serial);
-    }, AUTOCOMPLETE_DEBOUNCE_MS);
-  }
-
-  textarea.addEventListener("input", scheduleUpdate);
-  textarea.addEventListener("focus", scheduleUpdate);
+  textarea.addEventListener("input", update);
+  textarea.addEventListener("focus", update);
   textarea.addEventListener("blur", () => {
     requestSerial += 1;
-    if (updateTimer !== null) {
-      clearTimeout(updateTimer);
-      updateTimer = null;
-    }
     setTimeout(hide, 120);
   });
   document.addEventListener("mousedown", (ev) => {
@@ -366,7 +347,7 @@ async function addSettings() {
     category: ["Danbooru Tag JP Assist", "Autocomplete", "Suggestion count"],
     type: "number",
     defaultValue: DEFAULTS.maxSuggestions,
-    attrs: { min: 1, max: MAX_SERVER_RESULTS, step: 1 },
+    attrs: { min: 1, max: 200, step: 1 },
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.tagSource,

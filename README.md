@@ -122,6 +122,8 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - `Append comma`: 候補挿入後にカンマを追加します。
 - `Preserve prompt formatting`: 初期値はONです。候補挿入時に既存の改行・空行・インデント・前後スペースを保持します。OFFでは従来の自動整形動作になります。
 
+入力検索は80msデバウンスされ、候補の上下移動ではリスト全体を再描画しません。Hugging Face のCSV更新確認もUI初期化をブロックせずバックグラウンドで実行されます。
+
 CSVを追加・削除したあと、Settings のリストが更新されない場合は ComfyUI を再起動してください。
 
 ## 注意
@@ -256,6 +258,8 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - `Use spaces for underscores`: inserts `long hair` instead of `long_hair`.
 - `Append comma`: adds a comma after inserted suggestions.
 - `Preserve prompt formatting`: enabled by default. Keeps existing line breaks, blank lines, indentation, and surrounding spaces when inserting a suggestion. Disable it to use the legacy whitespace-normalizing behavior.
+
+Autocomplete searches are debounced by 80 ms, keyboard navigation no longer rebuilds the full suggestion list, and the Hugging Face CSV refresh check runs without blocking extension UI initialization.
 
 ## Notes
 

@@ -4,6 +4,7 @@ const API_URLS = ["/danbooru-tag-jp-assist/tags", "/jp-tag-autocomplete-test/tag
 const FILES_API_URLS = ["/danbooru-tag-jp-assist/files", "/jp-tag-autocomplete-test/files"];
 const HF_UPDATE_API_URLS = ["/danbooru-tag-jp-assist/hf-update", "/jp-tag-autocomplete-test/hf-update"];
 const EXT_NAME = "Danbooru.Tag.JP.Assist";
+const AUTOCOMPLETE_DEBOUNCE_MS = 80;
 const SETTINGS = {
   enabled: "DanbooruTagJPAssist.Enabled",
   maxSuggestions: "DanbooruTagJPAssist.MaxSuggestions",
@@ -253,17 +254,22 @@ function attachAutocomplete(textarea) {
   let active = 0;
   let token = null;
   let requestSerial = 0;
+  let updateTimer = null;
+  let rowElements = [];
 
   function hide() {
     popup.style.display = "none";
     popup.innerHTML = "";
     items = [];
     active = 0;
+    rowElements = [];
   }
 
   function render() {
     popup.innerHTML = "";
+    rowElements = [];
     const colors = popupColors();
+    const fragment = document.createDocumentFragment();
     popup.style.borderColor = colors.border;
     items.forEach((item, index) => {
       const row = document.createElement("div");
@@ -289,8 +295,24 @@ function attachAutocomplete(textarea) {
         insertTag(textarea, token, item.tag);
         hide();
       });
-      popup.append(row);
+      rowElements.push(row);
+      fragment.append(row);
     });
+    popup.append(fragment);
+  }
+
+  function setActive(index) {
+    const next = Math.max(0, Math.min(items.length - 1, index));
+    if (next === active) return;
+    const colors = popupColors();
+    const previousRow = rowElements[active];
+    const nextRow = rowElements[next];
+    if (previousRow) previousRow.style.background = "transparent";
+    active = next;
+    if (nextRow) {
+      nextRow.style.background = colors.active;
+      nextRow.scrollIntoView?.({ block: "nearest" });
+    }
   }
 
   async function update() {
@@ -325,10 +347,28 @@ function attachAutocomplete(textarea) {
     render();
   }
 
-  textarea.addEventListener("input", update);
-  textarea.addEventListener("focus", update);
+  function scheduleUpdate() {
+    if (updateTimer !== null) clearTimeout(updateTimer);
+    updateTimer = setTimeout(() => {
+      updateTimer = null;
+      void update();
+    }, AUTOCOMPLETE_DEBOUNCE_MS);
+  }
+
+  textarea.addEventListener("input", scheduleUpdate);
+  textarea.addEventListener("focus", () => {
+    if (updateTimer !== null) {
+      clearTimeout(updateTimer);
+      updateTimer = null;
+    }
+    void update();
+  });
   textarea.addEventListener("blur", () => {
     requestSerial += 1;
+    if (updateTimer !== null) {
+      clearTimeout(updateTimer);
+      updateTimer = null;
+    }
     setTimeout(hide, 120);
   });
   document.addEventListener("mousedown", (ev) => {
@@ -339,12 +379,10 @@ function attachAutocomplete(textarea) {
     if (popup.style.display === "none" || !items.length) return;
     if (ev.key === "ArrowDown") {
       ev.preventDefault();
-      active = Math.min(items.length - 1, active + 1);
-      render();
+      setActive(active + 1);
     } else if (ev.key === "ArrowUp") {
       ev.preventDefault();
-      active = Math.max(0, active - 1);
-      render();
+      setActive(active - 1);
     } else if (ev.key === "Enter" || ev.key === "Tab") {
       ev.preventDefault();
       insertTag(textarea, token, items[active].tag);
@@ -493,8 +531,9 @@ async function maybeUpdateHfFile() {
 app.registerExtension({
   name: EXT_NAME,
   async init() {
-    await maybeUpdateHfFile();
     await addSettings();
+    // Remote CSV refresh can take seconds; do not block the extension UI on it.
+    void maybeUpdateHfFile();
   },
   nodeCreated(node) {
     attachNodeTextareas(node);

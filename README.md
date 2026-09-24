@@ -111,7 +111,7 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 
 ## 主な設定
 
-- `Tag file`: `tags/tag_files/` 内の1ファイル、または `All`。初期値は `All` です。
+- `Tag file (priority)`: `tags/tag_files/` 内の1ファイル、または `All`。初期値は `All` です。個別ファイルを選ぶと、そのファイルの一致候補を優先し、候補が足りない場合は `Tag source` で有効な他ファイルから補完します。
 - `Translation file`: `tags/translation_files/` 内の1ファイル、または `All`。
 - `Update Danbooru CSV from Hugging Face`: Hugging Face 側を確認し、変更があれば `danbooru_tags.csv` を更新します。
 - `List every match`: 候補を多めに表示します。上限は500件です。
@@ -248,7 +248,7 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 
 ## Settings
 
-- `Tag file`: one file in `tags/tag_files/` or `All`. The default is `All`.
+- `Tag file (priority)`: one file in `tags/tag_files/` or `All`. The default is `All`. Selecting a file prioritizes matches from that file, then fills remaining suggestions from other files enabled by `Tag source`.
 - `Translation file`: one file in `tags/translation_files/` or `All`.
 - `Update Danbooru CSV from Hugging Face`: checks and updates `danbooru_tags.csv`.
 - `List every match`: shows a larger result list, capped at 500 suggestions.

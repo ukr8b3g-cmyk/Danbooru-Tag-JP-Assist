@@ -89,17 +89,19 @@ def _legacy_csv_files():
     ]
 
 
-def _resolve_tag_files(source="both", tag_file="all"):
+def _resolve_tag_file_groups(source="both", tag_file="all"):
+    """Return (priority_files, fallback_files) for tag search.
+
+    An explicitly selected Tag file is searched with higher priority. Remaining
+    files are still available as fallbacks according to Tag source, so selecting
+    one file no longer turns the search into a hard single-file filter.
+    """
     source = source if source in {"hf", "own", "both"} else "both"
     hf_path = os.path.join(TAG_FILES_DIR, HF_TAG_FILE)
     if not os.path.isfile(hf_path):
         hf_path = os.path.join(DATA_DIR, HF_TAG_FILE)
 
     hf_files = [hf_path] if os.path.isfile(hf_path) else []
-    selected_tag = _safe_csv_name(tag_file)
-    if selected_tag:
-        selected_path = os.path.join(TAG_FILES_DIR, selected_tag)
-        return [selected_path] if os.path.isfile(selected_path) else []
 
     own_candidates = _selected_files(TAG_FILES_DIR, "all")
     own_files = [
@@ -109,10 +111,35 @@ def _resolve_tag_files(source="both", tag_file="all"):
     own_files += _legacy_csv_files()
 
     if source == "hf":
-        return hf_files
-    if source == "own":
-        return own_files
-    return own_files + hf_files
+        fallback_files = list(hf_files)
+    elif source == "own":
+        fallback_files = list(own_files)
+    else:
+        fallback_files = list(own_files) + list(hf_files)
+
+    priority_files = []
+    selected_tag = _safe_csv_name(tag_file)
+    if selected_tag:
+        if selected_tag == HF_TAG_FILE and hf_files:
+            priority_files = list(hf_files)
+        else:
+            selected_path = os.path.join(TAG_FILES_DIR, selected_tag)
+            if os.path.isfile(selected_path):
+                priority_files = [selected_path]
+
+    if priority_files:
+        priority_keys = {os.path.normcase(os.path.abspath(path)) for path in priority_files}
+        fallback_files = [
+            path for path in fallback_files
+            if os.path.normcase(os.path.abspath(path)) not in priority_keys
+        ]
+
+    return priority_files, fallback_files
+
+
+def _resolve_tag_files(source="both", tag_file="all"):
+    priority_files, fallback_files = _resolve_tag_file_groups(source, tag_file)
+    return priority_files + fallback_files
 
 
 def _resolve_translation_files(selected="all"):
@@ -200,7 +227,8 @@ def _load_cached_tag_data(source="both", tag_file="all", translation_file="all")
     global _TAG_CACHE_KEY, _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH
 
     source = source if source in {"hf", "own", "both"} else "both"
-    tag_paths = _resolve_tag_files(source, tag_file)
+    priority_paths, fallback_paths = _resolve_tag_file_groups(source, tag_file)
+    tag_paths = priority_paths + fallback_paths
     translation_paths = _resolve_translation_files(translation_file)
     cache_key = (
         source,
@@ -215,9 +243,15 @@ def _load_cached_tag_data(source="both", tag_file="all", translation_file="all")
             return _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH
 
         merged = {}
-        for path in tag_paths:
+        for path in fallback_paths:
             for row in _read_tag_csv(path):
                 merged[row["tag"]] = row
+
+        priority_tags = set()
+        for path in priority_paths:
+            for row in _read_tag_csv(path):
+                merged[row["tag"]] = row
+                priority_tags.add(row["tag"])
 
         translations = _read_translation_map(translation_paths)
         for tag, text in translations.items():
@@ -226,8 +260,15 @@ def _load_cached_tag_data(source="both", tag_file="all", translation_file="all")
                 merged[tag]["aliases"] = text["aliases"]
 
         rows = list(merged.values())
+        has_priority = bool(priority_paths)
         search_rows = [
-            (row, _normalize(row["tag"]), _split_aliases(row), _count_value(row))
+            (
+                row,
+                _normalize(row["tag"]),
+                _split_aliases(row),
+                _count_value(row),
+                0 if (not has_priority or row["tag"] in priority_tags) else 1,
+            )
             for row in rows
         ]
 
@@ -256,7 +297,7 @@ def _search_tag_rows(query, source="both", tag_file="all", translation_file="all
     _, search_rows = _load_cached_tag_data(source, tag_file, translation_file)
 
     def scored_rows():
-        for row, tag, aliases, count in search_rows:
+        for row, tag, aliases, count, priority in search_rows:
             if tag == query or query in aliases:
                 score = 0
             elif tag.startswith(query) or any(alias.startswith(query) for alias in aliases):
@@ -268,11 +309,11 @@ def _search_tag_rows(query, source="both", tag_file="all", translation_file="all
 
             tag_name = str(row["tag"]).casefold()
             if sort_order == "count":
-                key = (-count, score, tag_name)
+                key = (priority, -count, score, tag_name)
             elif sort_order == "az":
-                key = (tag_name, score, -count)
+                key = (priority, tag_name, score, -count)
             else:
-                key = (score, -count, tag_name)
+                key = (priority, score, -count, tag_name)
             yield key, row
 
     return [row for _, row in heapq.nsmallest(limit, scored_rows(), key=lambda item: item[0])]

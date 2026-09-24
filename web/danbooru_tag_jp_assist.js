@@ -433,7 +433,7 @@ async function addSettings() {
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.tagFile,
-    name: "1. Tag file",
+    name: "1. Tag file (priority)",
     category: ["Danbooru Tag JP Assist", "Files", "1. Tag file"],
     type: "combo",
     options: tagFiles.map((name) => ({ value: name, text: name })),

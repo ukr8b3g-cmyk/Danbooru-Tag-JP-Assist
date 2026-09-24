@@ -9,6 +9,7 @@ const SETTINGS = {
   maxSuggestions: "DanbooruTagJPAssist.MaxSuggestions",
   showAll: "DanbooruTagJPAssist.ShowAll",
   autoComma: "DanbooruTagJPAssist.AutoComma",
+  preserveFormatting: "DanbooruTagJPAssist.PreservePromptFormatting",
   showJapanese: "DanbooruTagJPAssist.ShowJapanese",
   spacesForUnderscores: "DanbooruTagJPAssist.SpacesForUnderscores",
   sortOrder: "DanbooruTagJPAssist.SortOrder",
@@ -23,6 +24,7 @@ const DEFAULTS = {
   maxSuggestions: 10,
   showAll: true,
   autoComma: true,
+  preserveFormatting: true,
   showJapanese: true,
   spacesForUnderscores: true,
   sortOrder: "match",
@@ -111,6 +113,10 @@ function autoComma() {
   return !!getSetting(SETTINGS.autoComma, DEFAULTS.autoComma);
 }
 
+function preservePromptFormatting() {
+  return !!getSetting(SETTINGS.preserveFormatting, DEFAULTS.preserveFormatting);
+}
+
 function showJapanese() {
   return !!getSetting(SETTINGS.showJapanese, DEFAULTS.showJapanese);
 }
@@ -158,18 +164,44 @@ function currentToken(textarea) {
   const end = textarea.selectionStart ?? textarea.value.length;
   const before = textarea.value.slice(0, end);
   const start = Math.max(before.lastIndexOf(","), before.lastIndexOf("\n")) + 1;
-  return { start, end, text: before.slice(start).trim() };
+  const raw = before.slice(start);
+  const leadingWhitespace = raw.match(/^[ \t]*/)?.[0].length ?? 0;
+  const trailingWhitespace = raw.match(/[ \t]*$/)?.[0].length ?? 0;
+  const replaceStart = start + leadingWhitespace;
+  const replaceEnd = Math.max(replaceStart, end - trailingWhitespace);
+  return { start, end, replaceStart, replaceEnd, text: raw.trim() };
 }
 
 function insertTag(textarea, token, tag) {
-  const before = textarea.value.slice(0, token.start);
-  const after = textarea.value.slice(token.end);
-  const prefix = before && !/[,\n]\s*$/.test(before) ? `${before}, ` : before;
-  const suffix = autoComma() ? ", " : " ";
   const inserted = spacesForUnderscores() ? tag.replace(/_/g, " ") : tag;
-  textarea.value = `${prefix}${inserted}${suffix}${after.replace(/^\s+/, "")}`;
-  const pos = `${prefix}${inserted}${suffix}`.length;
-  textarea.setSelectionRange(pos, pos);
+
+  if (preservePromptFormatting()) {
+    const replaceStart = token.replaceStart ?? token.start;
+    const replaceEnd = token.replaceEnd ?? token.end;
+    const before = textarea.value.slice(0, replaceStart);
+    const after = textarea.value.slice(replaceEnd);
+    let suffix = "";
+
+    if (autoComma() && !/^[ \t]*,/.test(after)) {
+      // Keep existing whitespace/newlines exactly. Add a space only when there
+      // is no formatting after the token to preserve.
+      suffix = !after || !/^[\r\n \t]/.test(after) ? ", " : ",";
+    }
+
+    textarea.value = `${before}${inserted}${suffix}${after}`;
+    const pos = `${before}${inserted}${suffix}`.length;
+    textarea.setSelectionRange(pos, pos);
+  } else {
+    // Legacy behavior: normalize whitespace around the inserted suggestion.
+    const before = textarea.value.slice(0, token.start);
+    const after = textarea.value.slice(token.end);
+    const prefix = before && !/[,\n]\s*$/.test(before) ? `${before}, ` : before;
+    const suffix = autoComma() ? ", " : " ";
+    textarea.value = `${prefix}${inserted}${suffix}${after.replace(/^\s+/, "")}`;
+    const pos = `${prefix}${inserted}${suffix}`.length;
+    textarea.setSelectionRange(pos, pos);
+  }
+
   textarea.dispatchEvent(new Event("input", { bubbles: true }));
   textarea.dispatchEvent(new Event("change", { bubbles: true }));
 }
@@ -423,6 +455,13 @@ async function addSettings() {
     category: ["Danbooru Tag JP Assist", "Insert", "Auto comma"],
     type: "boolean",
     defaultValue: DEFAULTS.autoComma,
+  });
+  app.ui?.settings?.addSetting?.({
+    id: SETTINGS.preserveFormatting,
+    name: "Preserve prompt formatting",
+    category: ["Danbooru Tag JP Assist", "Insert", "Preserve formatting"],
+    type: "boolean",
+    defaultValue: DEFAULTS.preserveFormatting,
   });
   app.ui?.settings?.addSetting?.({
     id: SETTINGS.showJapanese,

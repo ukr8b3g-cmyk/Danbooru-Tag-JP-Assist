@@ -120,6 +120,7 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - `Popup color`: 候補ポップアップの色です。
 - `Use spaces for underscores`: `long_hair` を `long hair` として挿入します。
 - `Append comma`: 候補挿入後にカンマを追加します。
+- `Preserve prompt formatting`: 初期値はONです。候補挿入時に既存の改行・空行・インデント・前後スペースを保持します。OFFでは従来の自動整形動作になります。
 
 CSVを追加・削除したあと、Settings のリストが更新されない場合は ComfyUI を再起動してください。
 
@@ -254,6 +255,7 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - `Popup color`: changes the suggestion popup color.
 - `Use spaces for underscores`: inserts `long hair` instead of `long_hair`.
 - `Append comma`: adds a comma after inserted suggestions.
+- `Preserve prompt formatting`: enabled by default. Keeps existing line breaks, blank lines, indentation, and surrounding spaces when inserting a suggestion. Disable it to use the legacy whitespace-normalizing behavior.
 
 ## Notes
 

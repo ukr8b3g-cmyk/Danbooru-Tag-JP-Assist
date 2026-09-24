@@ -15,12 +15,21 @@ cd D:\Codex\ComfyUI\custom_nodes
 git clone https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist.git Danbooru-Tag-JP-Assist
 ```
 
-すでにフォルダーがある場合は更新します。
+すでにフォルダーがある場合は、通常は fast-forward のみで更新します。
 
 ```powershell
 cd D:\Codex\ComfyUI\custom_nodes\Danbooru-Tag-JP-Assist
-git pull
+git pull --ff-only
 ```
+
+ローカルでコードを編集しておらず、ブランチが分岐して更新できない場合は、GitHub の `origin/main` を正本として同期できます。
+
+```powershell
+git fetch origin
+git reset --hard origin/main
+```
+
+> `git reset --hard origin/main` はローカルの未コミット変更・ローカルのみのコミットを破棄します。必要な変更がある場合は先に退避してください。
 
 その後、ComfyUI を再起動し、古いUIが残る場合はブラウザを `Ctrl + F5` でハード更新してください。
 
@@ -33,10 +42,13 @@ git pull
 - カンマを自動で追加できます。
 - 一致順、優先度/count順、A-Z順で並び替えできます。
 - Danbooruタグ、自然言語辞書、自分のCSVを併用できます。
+- 個別の `Tag file (priority)` を選ぶと、そのCSVの一致候補を最優先し、足りない分だけ `Tag source` で有効な他ファイルから補完します。
+- 候補挿入時に既存の改行・空行・インデント・前後スペースを保持できます。
 - Hugging Face の Danbooru CSV を起動時に確認し、更新があればローカルの `danbooru_tags.csv` を更新できます。
 - 検索はサーバー側で行い、必要な候補だけをブラウザへ返します。
+- 入力検索は80msデバウンスされ、候補の上下移動ではリスト全体を再描画しません。
 
-最大の特徴は `All` モードです。複数のタグファイルや翻訳ファイルを、基本的に重複を抑えながらまとめて読み込み、ひとつの候補リストとして使えます。現在はベータ機能として扱ってください。
+`All` は複数のタグファイルや翻訳ファイルをまとめて使う簡単なモードです。個別ファイルを選んだ場合は「そのファイルだけ」に限定せず、選択ファイルを優先しつつ他の有効なソースをフォールバックとして利用します。
 
 Hugging Face がオフライン、または元ファイルが消えている場合は、既存のローカルCSVをそのまま使います。
 
@@ -44,16 +56,17 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 
 1. ComfyUI の Settings を開きます。
 2. `Danbooru Tag JP Assist` を有効にします。
-3. まずは `Tag file: All`、`Translation file: All` のまま使います。
+3. まずは `Tag file (priority): All`、`Translation file: All` のまま使います。
 4. ノードの複数行プロンプト欄に英語または日本語を入力します。
 5. 候補をキーボードまたはマウスで選択します。
 
 初期設定では以下の動作になります。
 
-- `Tag file: All` は `tags/tag_files/` 内の同梱CSVと、ローカルにある Danbooru CSV を読みます。
+- `Tag file (priority): All` は `tags/tag_files/` 内の同梱CSVと、ローカルにある Danbooru CSV をまとめて検索します。
+- 個別の `Tag file (priority)` を選ぶと、そのファイルの一致候補が先に並び、候補上限に余りがある場合は `Tag source` で有効な他ファイルから補完します。
 - `Translation file: All` は同梱の翻訳CSVをまとめて読みます。
 - `Tag source: Both` はローカルファイルと Hugging Face 由来の Danbooru CSV を併用します。
-- 同じタグが複数ファイルにある場合は、Danbooru CSV 側を優先します。
+- 同じタグが選択中の優先ファイルと他ファイルの両方にある場合は、優先ファイル側の行を採用します。優先ファイルを指定していない `All` では、従来どおり後から読み込まれる Danbooru CSV 側が重複時に優先されます。
 - `natural_language_tags.csv` は軽量な英語辞書・プロンプト語彙です。Danbooruタグの代替ではありません。
 - `merged_translations_dedup.csv` は Danbooru タグ用の日本語別名です。
 - `natural_language_ja.csv` は自然言語辞書用の日本語別名です。
@@ -109,6 +122,12 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 - `ja`: 日本語表示用テキスト
 - `aliases`: 検索用の日本語別名。複数ある場合はカンマ区切り
 
+## Tag file (priority) の動作
+
+個別CSVを選んでも検索範囲はその1ファイルだけにはなりません。選択CSVの一致候補に優先度0、フォールバック候補に優先度1を付け、`Sort mode` の並び順より先に優先度を評価します。
+
+たとえば `Suggestion count = 20` で、選択CSVに検索語と一致する候補が7件しかない場合、先頭7件は選択CSVから出し、残り最大13件を `Tag source` で有効な他CSVから補完します。選択CSVだけで20件以上一致すれば、表示上は選択CSVの候補だけになります。
+
 ## 主な設定
 
 - `Tag file (priority)`: `tags/tag_files/` 内の1ファイル、または `All`。初期値は `All` です。個別ファイルを選ぶと、そのファイルの一致候補を優先し、候補が足りない場合は `Tag source` で有効な他ファイルから補完します。
@@ -161,12 +180,21 @@ cd D:\Codex\ComfyUI\custom_nodes
 git clone https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist.git Danbooru-Tag-JP-Assist
 ```
 
-If the folder already exists:
+If the folder already exists, normally update with fast-forward only:
 
 ```powershell
 cd D:\Codex\ComfyUI\custom_nodes\Danbooru-Tag-JP-Assist
-git pull
+git pull --ff-only
 ```
+
+If you do not keep local code changes and the local branch has diverged, you can sync it exactly to GitHub `origin/main`:
+
+```powershell
+git fetch origin
+git reset --hard origin/main
+```
+
+> `git reset --hard origin/main` discards uncommitted changes and local-only commits. Back up anything you need first.
 
 Restart ComfyUI and hard refresh the browser with `Ctrl + F5`.
 
@@ -178,10 +206,13 @@ Restart ComfyUI and hard refresh the browser with `Ctrl + F5`.
 - Can insert spaces instead of underscores for Krea-style natural prompts.
 - Supports sorting by match, priority/count, or tag name.
 - Supports local tag files, Hugging Face tag files, or both.
+- Selecting a specific `Tag file (priority)` prioritizes matches from that CSV and fills any remaining slots from other sources enabled by `Tag source`.
+- Can preserve existing line breaks, blank lines, indentation, and surrounding spaces when inserting a suggestion.
 - Can check the Hugging Face source at startup and download/update the local `danbooru_tags.csv` when the remote file changes.
 - Performs matching on the server and sends only the requested suggestions to the browser.
+- Debounces input searches by 80 ms and updates keyboard selection without rebuilding the full suggestion list.
 
-The main feature is `All` mode. It can load multiple tag files and translation files together, generally suppress duplicate entries, and use them as one combined suggestion list. Treat this as a beta feature for now.
+`All` is the simplest combined mode. Selecting a specific file no longer acts as a hard single-file filter: the selected file is treated as the priority source and other enabled sources remain available as fallback.
 
 If Hugging Face is offline or the source file disappears, the node keeps using the local saved CSV.
 
@@ -189,16 +220,17 @@ If Hugging Face is offline or the source file disappears, the node keeps using t
 
 1. Open ComfyUI Settings.
 2. Enable `Danbooru Tag JP Assist`.
-3. Use the default `Tag file: All` and `Translation file: All` first.
+3. Use the default `Tag file (priority): All` and `Translation file: All` first.
 4. Type English or Japanese text in a multiline prompt box on a node.
 5. Select a suggestion with the keyboard or mouse.
 
 Default behavior:
 
-- `Tag file: All` loads bundled CSV files under `tags/tag_files/` plus the local Danbooru CSV when available.
+- `Tag file (priority): All` searches bundled CSV files under `tags/tag_files/` plus the local Danbooru CSV when available.
+- Selecting a specific `Tag file (priority)` puts matches from that file first, then fills unused result slots from other files enabled by `Tag source`.
 - `Translation file: All` loads the bundled translation CSV files together.
 - `Tag source: Both` uses local files and the Hugging Face Danbooru CSV together.
-- If the same tag exists in multiple files, the Danbooru CSV wins.
+- If a tag exists in both the selected priority file and fallback files, the selected file wins. With `All` and no explicit priority file, the later-loaded Danbooru CSV keeps the existing duplicate-resolution behavior.
 - `natural_language_tags.csv` is a lightweight English dictionary and prompt vocabulary, not a Danbooru tag replacement.
 - `merged_translations_dedup.csv` is for Danbooru tag Japanese aliases.
 - `natural_language_ja.csv` is only for the natural language dictionary.
@@ -245,6 +277,12 @@ tag,ja,aliases
 1girl,"少女,女の子,おんなのこ","少女,女の子,若い女性,girl"
 long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 ```
+
+## Tag file (priority) behavior
+
+Selecting a specific CSV does not restrict search to that file alone. Matches from the selected CSV are assigned priority 0 and fallback matches priority 1, and this priority is evaluated before the selected `Sort mode`.
+
+For example, with `Suggestion count = 20`, if the selected CSV has only 7 matches for the query, those 7 appear first and up to 13 additional matches are filled from other sources enabled by `Tag source`. If the selected CSV has 20 or more matches, only its matches will normally be visible within that result limit.
 
 ## Settings
 

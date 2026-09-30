@@ -36,7 +36,10 @@ const DEFAULTS = {
   autoUpdateHf: true,
 };
 const resultCache = new Map();
+const scheduledNodeScans = new WeakSet();
 let fileListCache = null;
+let activeAutocomplete = null;
+let globalDismissInstalled = false;
 
 async function loadTags(query) {
   const source = tagSource();
@@ -245,6 +248,17 @@ function splitAlias(item) {
     .filter(Boolean);
 }
 
+function ensureGlobalDismissHandler() {
+  if (globalDismissInstalled) return;
+  globalDismissInstalled = true;
+  document.addEventListener("mousedown", (ev) => {
+    const current = activeAutocomplete;
+    if (!current) return;
+    if (ev.target === current.textarea || current.popup.contains(ev.target)) return;
+    current.hide();
+  });
+}
+
 function attachAutocomplete(textarea) {
   if (!shouldAttach(textarea) || textarea.__jpTagAutocompleteAttached) return;
   textarea.__jpTagAutocompleteAttached = true;
@@ -263,7 +277,11 @@ function attachAutocomplete(textarea) {
     items = [];
     active = 0;
     rowElements = [];
+    if (activeAutocomplete?.textarea === textarea) activeAutocomplete = null;
   }
+
+  const controller = { textarea, popup, hide };
+  ensureGlobalDismissHandler();
 
   function render() {
     popup.innerHTML = "";
@@ -315,8 +333,8 @@ function attachAutocomplete(textarea) {
     }
   }
 
-  async function update() {
-    const serial = ++requestSerial;
+  async function update(serial) {
+    if (serial !== requestSerial) return;
     if (!isEnabled()) {
       hide();
       return;
@@ -340,6 +358,8 @@ function attachAutocomplete(textarea) {
 
     active = 0;
     const rect = textarea.getBoundingClientRect();
+    if (activeAutocomplete && activeAutocomplete !== controller) activeAutocomplete.hide();
+    activeAutocomplete = controller;
     popup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 300))}px`;
     popup.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 250))}px`;
     popup.style.width = `${Math.max(300, Math.min(rect.width, window.innerWidth - 16))}px`;
@@ -348,20 +368,25 @@ function attachAutocomplete(textarea) {
   }
 
   function scheduleUpdate() {
+    const serial = ++requestSerial;
+    // Immediately invalidate any visible/async result from the previous token.
+    // This prevents Enter/Tab during the debounce window from inserting stale data.
+    hide();
     if (updateTimer !== null) clearTimeout(updateTimer);
     updateTimer = setTimeout(() => {
       updateTimer = null;
-      void update();
+      void update(serial);
     }, AUTOCOMPLETE_DEBOUNCE_MS);
   }
 
   textarea.addEventListener("input", scheduleUpdate);
   textarea.addEventListener("focus", () => {
+    const serial = ++requestSerial;
     if (updateTimer !== null) {
       clearTimeout(updateTimer);
       updateTimer = null;
     }
-    void update();
+    void update(serial);
   });
   textarea.addEventListener("blur", () => {
     requestSerial += 1;
@@ -370,10 +395,6 @@ function attachAutocomplete(textarea) {
       updateTimer = null;
     }
     setTimeout(hide, 120);
-  });
-  document.addEventListener("mousedown", (ev) => {
-    if (ev.target === textarea || popup.contains(ev.target)) return;
-    hide();
   });
   textarea.addEventListener("keydown", (ev) => {
     if (popup.style.display === "none" || !items.length) return;
@@ -393,11 +414,30 @@ function attachAutocomplete(textarea) {
   });
 }
 
+function attachTextareasInElement(el) {
+  if (el instanceof HTMLTextAreaElement) {
+    attachAutocomplete(el);
+    return;
+  }
+  if (!(el instanceof Element)) return;
+  el.querySelectorAll("textarea").forEach(attachAutocomplete);
+}
+
 function attachNodeTextareas(node) {
   for (const widget of node?.widgets || []) {
-    const el = widget?.element ?? widget?.inputEl;
-    if (el instanceof HTMLTextAreaElement) attachAutocomplete(el);
+    attachTextareasInElement(widget?.inputEl);
+    if (widget?.element !== widget?.inputEl) attachTextareasInElement(widget?.element);
   }
+}
+
+function scheduleNodeTextareaScan(node) {
+  attachNodeTextareas(node);
+  if (!node || scheduledNodeScans.has(node) || typeof requestAnimationFrame !== "function") return;
+  scheduledNodeScans.add(node);
+  requestAnimationFrame(() => {
+    scheduledNodeScans.delete(node);
+    attachNodeTextareas(node);
+  });
 }
 
 async function addSettings() {
@@ -536,9 +576,9 @@ app.registerExtension({
     void maybeUpdateHfFile();
   },
   nodeCreated(node) {
-    attachNodeTextareas(node);
+    scheduleNodeTextareaScan(node);
   },
   loadedGraphNode(node) {
-    attachNodeTextareas(node);
+    scheduleNodeTextareaScan(node);
   },
 });

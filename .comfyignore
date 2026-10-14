@@ -1,0 +1,28 @@
+# Development-only files.
+/.github/
+/.gitignore
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+.env
+.env.*
+*.log
+*.tmp
+
+# Ship only the repository's bundled datasets, never runtime downloads or user data.
+/tags/*
+!/tags/tag_files/
+!/tags/translation_files/
+/tags/tag_files/**
+!/tags/tag_files/anima_artists.csv
+!/tags/tag_files/anima_characters.csv
+!/tags/tag_files/danbooru_2025.csv
+!/tags/tag_files/e621.csv
+!/tags/tag_files/natural_language_tags.csv
+/tags/translation_files/**
+!/tags/translation_files/merged_translations_dedup.csv
+!/tags/translation_files/natural_language_ja.csv

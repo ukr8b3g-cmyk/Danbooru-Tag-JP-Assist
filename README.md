@@ -6,6 +6,17 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 [English README](#english-readme)
 
+## Registry 公開準備
+
+`pyproject.toml` は Comfy Registry 向けの公開準備用メタデータです。この変更では Registry への公開や GitHub Release の作成は行っていません。インストールには下記の Git clone 手順を使用してください。
+
+- Node ID: `danbooru-tag-jp-assist`
+- Publisher ID: `ukr8b3g-cmyk`
+- 準備版バージョン: `0.1.0`
+- ComfyUI の Python 環境で動作します。`server` と `aiohttp` は ComfyUI 側の環境を使用するため、追加の pip 依存は宣言していません。
+- 配布には本体 Python、`web/`、下記の同梱タグ5件・翻訳2件のCSV、README、LICENSE、THIRD_PARTY_NOTICES を含めます。`.comfyignore` は実行時ダウンロード、取得メタデータ、一時ファイル、利用者が追加したデータを除外します。公開準備は利用者データのないクリーンな checkout で行ってください。
+- MIT はソースコードに適用され、第三者データの利用条件を置き換えません。[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
+
 ## インストール
 
 ComfyUI を停止してから、`custom_nodes` に clone します。
@@ -170,6 +181,17 @@ CSVを追加・削除したあと、Settings のリストが更新されない�
 Danbooru Tag JP Assist adds tag suggestions to multiline text areas that belong to ComfyUI nodes.
 
 It is intended for users who want to search English Danbooru tags and English prompt vocabulary with optional Japanese aliases.
+
+## Registry preparation
+
+`pyproject.toml` contains metadata prepared for Comfy Registry. This change does not publish the node to the Registry or create a GitHub Release. Use the Git clone installation below.
+
+- Node ID: `danbooru-tag-jp-assist`
+- Publisher ID: `ukr8b3g-cmyk`
+- Prepared version: `0.1.0`
+- Runs inside ComfyUI's Python environment. ComfyUI supplies `server` and `aiohttp`, so no additional pip dependencies are declared.
+- The distribution includes the Python implementation, `web/`, the five bundled tag CSVs and two translation CSVs listed below, README, LICENSE, and THIRD_PARTY_NOTICES. `.comfyignore` excludes runtime downloads, download metadata, temporary files, and user-added data. Prepare any publication from a clean checkout without user data.
+- MIT applies to the source code and does not replace third-party data terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Installation
 

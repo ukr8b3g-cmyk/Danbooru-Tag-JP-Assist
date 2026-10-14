@@ -1,0 +1,18 @@
+[project]
+name = "danbooru-tag-jp-assist"
+version = "0.1.0"
+description = "Tag autocomplete for ComfyUI with Japanese aliases and English prompt vocabulary."
+readme = "README.md"
+# Applies to software; third-party data retains its own terms.
+license = { file = "LICENSE" }
+# ComfyUI supplies server and aiohttp; no additional pip packages are required.
+dependencies = []
+
+[project.urls]
+Repository = "https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist"
+Documentation = "https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist#readme"
+"Bug Tracker" = "https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist/issues"
+
+[tool.comfy]
+PublisherId = "ukr8b3g-cmyk"
+DisplayName = "Danbooru Tag JP Assist"

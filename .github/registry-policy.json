@@ -1,0 +1,9 @@
+{
+  "node": "danbooru-tag-jp-assist",
+  "publisher": "ukr8b3g-cmyk",
+  "repository": "https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist",
+  "includes": [],
+  "license": {
+    "file": "LICENSE"
+  }
+}

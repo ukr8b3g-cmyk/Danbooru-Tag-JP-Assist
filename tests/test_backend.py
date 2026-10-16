@@ -38,6 +38,7 @@ class Dictionaries(unittest.TestCase):
     def test_headerless_first_record_and_alias_column(self):
         rows = backend._read_tag_csv(self.tags('e621.csv', 'mammal,5,100,"mammals,ungulate"\nanthro,0,0,word\n'))
         self.assertEqual([r['tag'] for r in rows], ['mammal', 'anthro'])
+        self.assertEqual([r['aliases'] for r in rows], ['mammals,ungulate', 'word'])
         self.assertEqual(rows[1]['meta']['insert_mode'], 'tag')
         self.assertEqual(rows[1]['meta']['post_count'], 0)
 
@@ -58,6 +59,51 @@ class Dictionaries(unittest.TestCase):
     def test_missing_count_and_valid_zero(self):
         rows = backend._read_tag_csv(self.tags('danbooru_2025.csv', 'tag,count\na,\nb,0\nc,-1\nd,nan\n'))
         self.assertEqual([r['meta']['post_count'] for r in rows], [None, 0, None, None])
+
+    def test_nonfinite_counts_do_not_stop_search(self):
+        params = {'tag_files': '["danbooru_tags.csv"]', 'translation_files': '[]'}
+        for value in ['Infinity', '-Infinity', '1e309', '-1e309', 'NaN', float('inf'), float('-inf')]:
+            with self.subTest(count=value):
+                self.assertEqual(backend._count_value({'count': value}), 0)
+                self.tags('danbooru_tags.csv', f'tag,count\nsafe_tag,100\nbad_tag,{value}\n')
+                backend._clear_tag_cache()
+                data = backend._tag_response({**params, 'q': 'safe'})
+                self.assertEqual([row['tag'] for row in data['tags']], ['safe_tag'])
+                rows = backend._tag_response({**params, 'q': 'tag'})['tags']
+                self.assertEqual([row['tag'] for row in rows], ['safe_tag', 'bad_tag'])
+                self.assertIsNone(rows[1]['meta']['post_count'])
+
+    def test_tag_csv_alias_search_with_and_without_headers(self):
+        for header in [False, True]:
+            with self.subTest(header=header):
+                name = 'header.csv' if header else 'headerless.csv'
+                text = ('tag,category,count,aliases\n' if header else '')
+                self.tags(name, text + 'long_hair,0,100,"髪が長い,flowing locks;long locks"\n')
+                params = {'tag_files': json.dumps([name]), 'translation_files': '[]'}
+                for alias in ['髪が長い', 'flowing locks', 'long locks']:
+                    rows = backend._tag_response({**params, 'q': alias})['tags']
+                    self.assertEqual([row['tag'] for row in rows], ['long_hair'])
+                    self.assertEqual(rows[0]['ja'], '')
+                    self.assertEqual(backend._tag_response({**params, 'q': alias, 'search_jp': '0'})['tags'], [])
+                self.assertEqual(backend._tag_response({**params, 'q': 'long', 'search_jp': '0'})['tags'][0]['tag'], 'long_hair')
+
+    def test_tag_aliases_survive_translation_merge_and_csv_priority(self):
+        self.tags('a.csv', 'tag,count,aliases\nlong_hair,100,髪が長い\n')
+        self.tags('b.csv', 'tag,count,aliases\nlong_hair,200,長い毛髪\n')
+        folder = Path(backend.TRANSLATION_FILES_DIR)
+        (folder / 'ja.csv').write_text('tag,ja,aliases\nlong_hair,長髪,\n', encoding='utf-8')
+        (folder / 'extra.csv').write_text('tag,ja,aliases\nlong_hair,ロングヘア,流れる髪\n', encoding='utf-8')
+        options = {'tag_files': ['a.csv', 'b.csv'], 'translation_files': ['ja.csv', 'extra.csv']}
+        self.assertEqual(backend._search_tag_rows('髪が長い', **options)[0]['ja'], '長髪')
+        self.assertEqual(backend._search_tag_rows('長い毛髪', **options), [])
+        self.assertEqual(backend._search_tag_rows('流れる髪', **options), [])
+        options['translation_files'].reverse()
+        for alias in ['髪が長い', '流れる髪']:
+            self.assertEqual(backend._search_tag_rows(alias, **options)[0]['ja'], 'ロングヘア')
+        options['tag_files'].reverse()
+        self.assertEqual(backend._search_tag_rows('髪が長い', **options), [])
+        for alias in ['長い毛髪', '流れる髪']:
+            self.assertEqual(backend._search_tag_rows(alias, **options)[0]['meta']['source_file'], 'b.csv')
 
     def test_priority_winner_keeps_own_metadata(self):
         self.tags('a.csv', 'tag,count,category_scheme\nblue_hair,2,e621\n')

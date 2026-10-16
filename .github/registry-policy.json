@@ -5,5 +5,9 @@
   "includes": [],
   "license": {
     "file": "LICENSE"
-  }
+  },
+  "required_workflows": [
+    "Product regression tests",
+    "Registry publication configuration checks"
+  ]
 }

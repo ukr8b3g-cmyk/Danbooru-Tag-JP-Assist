@@ -6,13 +6,13 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 [English README](#english-readme)
 
-## Registry 公開準備
+## 配布
 
-`pyproject.toml` は Comfy Registry 向けの公開準備用メタデータです。この変更では Registry への公開や GitHub Release の作成は行っていません。インストールには下記の Git clone 手順を使用してください。
+正式版は [GitHub Releases](https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist/releases) から取得できます。Comfy Registryへの公開・審査状態はGitHub ActionsとRegistry側で確認してください。Git cloneからのインストールも利用できます。
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- 準備版バージョン: `0.1.0`
+- バージョン: `0.2.0`
 - ComfyUI の Python 環境で動作します。`server` と `aiohttp` は ComfyUI 側の環境を使用するため、追加の pip 依存は宣言していません。
 - 配布には本体 Python、`web/`、下記の同梱タグ5件・翻訳2件のCSV、README、LICENSE、THIRD_PARTY_NOTICES を含めます。`.comfyignore` は実行時ダウンロード、取得メタデータ、一時ファイル、利用者が追加したデータを除外します。公開準備は利用者データのないクリーンな checkout で行ってください。
 - MIT はソースコードに適用され、第三者データの利用条件を置き換えません。[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
@@ -151,6 +151,8 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 
 ## 主な設定
 
+タグ・翻訳の各 `Selection mode` で `Selected CSVs only` を選ぶと、チェックしたCSVだけを選択順に使用します。↑ / ↓ で優先順位を変更できます。空の選択は候補・翻訳なしです。旧 `Tag source` / `Tag file (priority)` / `Translation file` は表示を維持しますが、選択モードでは対応する旧設定を使用しません。
+
 - `Tag file (priority)`: `tags/tag_files/` 内の1ファイル、または `All`。初期値は `All` です。個別ファイルを選ぶと、そのファイルの一致候補を優先し、候補が足りない場合は `Tag source` で有効な他ファイルから補完します。
 - `Translation file`: `tags/translation_files/` 内の1ファイル、または `All`。
 - `Update Danbooru CSV from Hugging Face`: Hugging Face 側を確認し、変更があれば `danbooru_tags.csv` を更新します。
@@ -167,6 +169,8 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 CSVを追加・削除したあと、Settings のリストが更新されない場合は ComfyUI を再起動してください。
 
 ## 注意
+
+- `Settings → pysssss → Text Autocomplete` と併用すると、Embeddingなどの別候補が重なったり、スクロールバー操作でJP Assist候補が閉じる場合があります。その場合はpysssss側のText AutocompleteをOFFにしてください。JP AssistはEmbedding / LoRA候補を自動取得しません。
 
 - 補完対象は ComfyUI ノードに属する複数行テキスト欄です。Settings や一般的なモーダル内の textarea には取り付けません。
 - GitHubリポジトリには `danbooru_tags.csv` を含めません。
@@ -192,13 +196,13 @@ Danbooru Tag JP Assist adds tag suggestions to multiline text areas that belong 
 
 It is intended for users who want to search English Danbooru tags and English prompt vocabulary with optional Japanese aliases.
 
-## Registry preparation
+## Distribution
 
-`pyproject.toml` contains metadata prepared for Comfy Registry. This change does not publish the node to the Registry or create a GitHub Release. Use the Git clone installation below.
+Stable versions are available from [GitHub Releases](https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist/releases). Check GitHub Actions and Comfy Registry for publication and review status. Git clone installation is also supported.
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- Prepared version: `0.1.0`
+- Version: `0.2.0`
 - Runs inside ComfyUI's Python environment. ComfyUI supplies `server` and `aiohttp`, so no additional pip dependencies are declared.
 - The distribution includes the Python implementation, `web/`, the five bundled tag CSVs and two translation CSVs listed below, README, LICENSE, and THIRD_PARTY_NOTICES. `.comfyignore` excludes runtime downloads, download metadata, temporary files, and user-added data. Prepare any publication from a clean checkout without user data.
 - MIT applies to the source code and does not replace third-party data terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -333,7 +337,7 @@ For example, with `Suggestion count = 20`, if the selected CSV has only 7 matche
 
 - `Tag selection mode` and `Translation selection mode`: independently choose the existing `All / single priority` (`All / single file` for translations) or `Selected CSVs only`. The default preserves existing settings.
 - `Selected tag CSVs (ordered)` and `Selected translation CSVs (ordered)`: check files in priority order, then use ↑ / ↓ to reorder. In selected mode only checked files are read. The first selected tag CSV wins duplicate rows and its matches precede later files before `Sort mode`; the first selected translation CSV wins duplicate translations. Empty tag selection gives no suggestions; empty translation selection gives no translations. Missing selections remain visible as unavailable and never fall back to All.
-- In selected mode the tag checklist replaces `Tag source` and `Tag file (priority)`, and the translation checklist replaces `Translation file`. Switching back restores those existing choices. Settings are global and do not add workflow fields. Restart ComfyUI and reload the browser after updating to enable the new backend behavior.
+- In selected mode the tag checklist controls search instead of `Tag source` and `Tag file (priority)`, and the translation checklist controls search instead of `Translation file`. The legacy controls remain visible but are not used in the corresponding selected mode. Switching back restores those existing choices. Settings are global and do not add workflow fields. Restart ComfyUI and reload the browser after updating to enable the new backend behavior.
 - `Tag file (priority)`: one file in `tags/tag_files/` or `All`. The default is `All`. Selecting a file prioritizes matches from that file, then fills remaining suggestions from other files enabled by `Tag source`.
 - `Translation file`: one file in `tags/translation_files/` or `All`.
 - `Update Danbooru CSV from Hugging Face`: checks and updates `danbooru_tags.csv`.
@@ -348,6 +352,8 @@ For example, with `Suggestion count = 20`, if the selected CSV has only 7 matche
 Autocomplete searches are debounced by 80 ms, keyboard navigation no longer rebuilds the full suggestion list, and the Hugging Face CSV refresh check runs without blocking extension UI initialization.
 
 ## Notes
+
+- If suggestions overlap or dragging the suggestion scrollbar dismisses JP Assist, disable `Text Autocomplete` under `Settings → pysssss`. That separate extension provides Embedding/LoRA suggestions; JP Assist does not automatically fetch those model lists.
 
 - Autocomplete is attached to multiline text areas owned by ComfyUI nodes, not general Settings or modal text areas.
 - The GitHub repository does not include `danbooru_tags.csv`.

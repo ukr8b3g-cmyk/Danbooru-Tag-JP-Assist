@@ -240,7 +240,7 @@ def _read_tag_csv(path):
         count = (row.get("count") or "").strip()
         category = _nonnegative_int(row.get("category"))
         rows.append({
-            "tag": tag, "ja": "", "aliases": "", "count": count,
+            "tag": tag, "ja": "", "aliases": (row.get("aliases") or "").strip(), "count": count,
             "meta": {
                 "insert_text": original if insert_mode == "raw" else tag,
                 "source_file": filename, "source_type": source_type,
@@ -287,10 +287,10 @@ def _split_aliases(row):
 def _count_value(row):
     try:
         return int(row.get("count") or 0)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
         try:
             return int(float(row.get("count") or 0))
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, OverflowError):
             return 0
 
 
@@ -350,7 +350,7 @@ def _load_cached_tag_data(source="both", tag_file="all", translation_file="all",
         for tag, text in translations.items():
             if tag in merged:
                 merged[tag]["ja"] = text["ja"]
-                merged[tag]["aliases"] = text["aliases"]
+                merged[tag]["aliases"] = ",".join(value for value in (merged[tag]["aliases"], text["aliases"]) if value)
 
         rows = list(merged.values())
         if tag_files is not None:

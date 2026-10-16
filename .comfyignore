@@ -1,4 +1,5 @@
 # Development-only files.
+/tests/
 /.github/
 /.gitignore
 __pycache__/

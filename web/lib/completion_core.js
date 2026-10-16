@@ -1,0 +1,88 @@
+export function normalizeSearch(value) {
+  return String(value ?? "").toLowerCase().replaceAll("_", " ").trim();
+}
+
+export function inputContext(value, selectionStart, selectionEnd = selectionStart) {
+  const end = selectionStart ?? value.length;
+  const before = value.slice(0, end);
+  const start = Math.max(before.lastIndexOf(","), before.lastIndexOf("\n"), before.lastIndexOf("\r")) + 1;
+  const raw = before.slice(start);
+  const leading = raw.match(/^[ \t]*/)?.[0].length ?? 0;
+  const trailing = raw.match(/[ \t]*$/)?.[0].length ?? 0;
+  const tail = raw.match(/[^\s,]+$/)?.[0] ?? "";
+  const right = value.slice(end);
+  const wordEnd = end + (right.match(/^[^\s,]*/)?.[0].length ?? 0);
+  const segmentRight = right.match(/^[^,\r\n]*/)?.[0] ?? "";
+  return {
+    start, end, replaceStart: start + leading,
+    replaceEnd: Math.max(start + leading, end - trailing),
+    segmentEnd: end + segmentRight.replace(/[ \t]+$/, "").length,
+    wordStart: end - tail.length, wordEnd, tail, text: raw.trim(),
+    value, selectionStart: end, selectionEnd: selectionEnd ?? end,
+  };
+}
+
+export function snapshotMatches(context, value, start, end) {
+  return context?.value === value && context.selectionStart === start && context.selectionEnd === end;
+}
+
+export function underscoreProtected(text, patterns = "") {
+  if (text.startsWith("__") && text.endsWith("__") && text.length >= 4) return true;
+  return String(patterns).split(/[,\r\n]+/).map(x => x.trim()).filter(Boolean).some(pattern => {
+    const escaped = pattern.replace(/[.+^${}()|[\]\\]/g, "\\$&").replaceAll("*", ".*").replaceAll("?", ".");
+    return new RegExp(`^${escaped}$`, "iu").test(text);
+  });
+}
+
+function replaceUnderscores(text, patterns, protectWildcards) {
+  return text.split(/(,[ \t]*)/).map(part => {
+    if (!part || part.startsWith(",")) return part;
+    if ((protectWildcards || patterns) && underscoreProtected(part, patterns)) return part;
+    return part.replaceAll("_", " ");
+  }).join("");
+}
+
+function naturalRange(context, selected) {
+  const segment = context.value.slice(context.replaceStart, context.end);
+  const words = [...segment.matchAll(/\S+/gu)];
+  for (const word of words) {
+    const suffix = normalizeSearch(segment.slice(word.index));
+    if (suffix && normalizeSearch(selected).startsWith(suffix)) {
+      return {start: context.replaceStart + word.index, end: context.wordEnd};
+    }
+  }
+  return {start: context.wordStart, end: context.wordEnd};
+}
+
+export function insertionEdit(context, item, options = {}) {
+  const csv = options.behavior === "csv";
+  const meta = item.meta ?? {};
+  const mode = csv ? (meta.insert_mode ?? "tag") : "tag";
+  let inserted = csv ? (meta.insert_text ?? item.tag) : item.tag;
+  if (mode !== "raw" && options.spacesForUnderscores) {
+    inserted = replaceUnderscores(inserted, options.exclusions ?? "", csv);
+  }
+  let start = context.replaceStart;
+  let end = context.replaceEnd;
+  if (csv) {
+    if (meta.source_type === "natural_language" || mode === "word") {
+      ({start, end} = naturalRange(context, item.tag));
+    } else {
+      end = Math.max(end, context.segmentEnd);
+    }
+  }
+  const value = context.value;
+  const after = value.slice(end);
+  let replacement = inserted;
+  if (!csv && options.preserveFormatting === false) {
+    start = context.start;
+    end = context.end + (value.slice(context.end).match(/^\s*/)?.[0].length ?? 0);
+    const before = value.slice(0, start);
+    replacement = (before && !/[,\n]\s*$/.test(before) ? ", " : "") + inserted + (options.autoComma ? ", " : " ");
+  } else if (mode === "word") {
+    if (!after || !/^[\s,.;:!?\)\]\}]/u.test(after)) replacement += " ";
+  } else if (mode !== "raw" && options.autoComma && !/^[ \t]*,/.test(after)) {
+    replacement += !after || !/^[\r\n \t]/.test(after) ? ", " : ",";
+  }
+  return {start, end, replacement, value: value.slice(0, start) + replacement + value.slice(end), caret: start + replacement.length};
+}

@@ -1,6 +1,8 @@
 import asyncio
 import csv
 import heapq
+import hashlib
+import logging
 import json
 import os
 import threading
@@ -25,6 +27,8 @@ _TAG_CACHE_LOCK = threading.Lock()
 _TAG_CACHE_KEY = None
 _TAG_CACHE_ROWS = None
 _TAG_CACHE_SEARCH = None
+_TAG_CACHE_ERRORS = ()
+_LOG = logging.getLogger(__name__)
 
 
 class DanbooruTagJPAssist:
@@ -79,6 +83,27 @@ def _selected_files(folder, selected):
     return [path] if os.path.isfile(path) else []
 
 
+def _ordered_files(folder, names):
+    available = {os.path.basename(path): path for path in _csv_files(folder)}
+    if folder == TAG_FILES_DIR and HF_TAG_FILE not in available:
+        hf_path = os.path.join(DATA_DIR, HF_TAG_FILE)
+        if os.path.isfile(hf_path):
+            available[HF_TAG_FILE] = hf_path
+    return list(dict.fromkeys(available[name] for name in names if name in available))
+
+
+def _requested_files(params, key):
+    if key not in params:
+        return None
+    try:
+        names = json.loads(params[key])
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(names, list):
+        return []
+    return list(dict.fromkeys(name for name in names if isinstance(name, str) and _safe_csv_name(name)))
+
+
 def _legacy_csv_files():
     if not os.path.isdir(DATA_DIR):
         return []
@@ -89,13 +114,15 @@ def _legacy_csv_files():
     ]
 
 
-def _resolve_tag_file_groups(source="both", tag_file="all"):
+def _resolve_tag_file_groups(source="both", tag_file="all", tag_files=None):
     """Return (priority_files, fallback_files) for tag search.
 
     An explicitly selected Tag file is searched with higher priority. Remaining
     files are still available as fallbacks according to Tag source, so selecting
     one file no longer turns the search into a hard single-file filter.
     """
+    if tag_files is not None:
+        return _ordered_files(TAG_FILES_DIR, tag_files), []
     source = source if source in {"hf", "own", "both"} else "both"
     hf_path = os.path.join(TAG_FILES_DIR, HF_TAG_FILE)
     if not os.path.isfile(hf_path):
@@ -137,12 +164,14 @@ def _resolve_tag_file_groups(source="both", tag_file="all"):
     return priority_files, fallback_files
 
 
-def _resolve_tag_files(source="both", tag_file="all"):
-    priority_files, fallback_files = _resolve_tag_file_groups(source, tag_file)
+def _resolve_tag_files(source="both", tag_file="all", tag_files=None):
+    priority_files, fallback_files = _resolve_tag_file_groups(source, tag_file, tag_files)
     return priority_files + fallback_files
 
 
-def _resolve_translation_files(selected="all"):
+def _resolve_translation_files(selected="all", translation_files=None):
+    if translation_files is not None:
+        return _ordered_files(TRANSLATION_FILES_DIR, translation_files)
     paths = _selected_files(TRANSLATION_FILES_DIR, selected)
     if not _safe_csv_name(selected):
         paths += _legacy_csv_files()
@@ -161,35 +190,85 @@ def _file_signature(paths):
     return tuple(signature)
 
 
+def _csv_rows(path):
+    with open(path, "r", encoding="utf-8-sig", newline="") as f:
+        reader = csv.reader(f, strict=True)
+        first = next((row for row in reader if any(cell.strip() for cell in row)), None)
+        if first is None:
+            return
+        names = [cell.strip().lower() for cell in first]
+        header = names if names[0] in {"tag", "english"} else None
+        if header is None:
+            yield {key: first[i] if i < len(first) else "" for i, key in enumerate(("tag", "category", "count", "aliases"))}
+        for cells in reader:
+            if not any(cell.strip() for cell in cells):
+                continue
+            keys = header or ("tag", "category", "count", "aliases")
+            yield {key: cells[i] if i < len(cells) else "" for i, key in enumerate(keys)}
+
+
+def _nonnegative_int(value):
+    try:
+        number = int(str(value).strip())
+    except (TypeError, ValueError):
+        return None
+    return number if number >= 0 else None
+
+
 def _read_tag_csv(path):
     rows = []
-    with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            tag = (row.get("tag") or row.get("english") or "").strip()
-            count = (row.get("count") or "").strip()
-            if tag:
-                rows.append({
-                    "tag": tag,
-                    "ja": "",
-                    "aliases": "",
-                    "count": count,
-                })
+    filename = os.path.basename(path)
+    defaults = {
+        "natural_language_tags.csv": ("natural_language", "word", "unknown"),
+        "danbooru_2025.csv": ("tag", "tag", "danbooru"),
+        HF_TAG_FILE: ("tag", "tag", "danbooru"),
+        "e621.csv": ("tag", "tag", "e621"),
+    }
+    default_source, default_mode, default_scheme = defaults.get(filename, ("tag", "tag", "unknown"))
+    for row in _csv_rows(path):
+        original = row.get("tag") or row.get("english") or ""
+        tag = original.strip()
+        if not tag:
+            continue
+        source_type = (row.get("source_type") or default_source).strip().lower()
+        if source_type not in {"tag", "natural_language", "custom"}:
+            source_type = default_source
+        insert_mode = (row.get("insert_mode") or ("word" if source_type == "natural_language" else default_mode)).strip().lower()
+        if insert_mode not in {"tag", "phrase", "word", "raw"}:
+            insert_mode = "tag"
+        scheme = (row.get("category_scheme") or default_scheme).strip().lower()
+        count = (row.get("count") or "").strip()
+        category = _nonnegative_int(row.get("category"))
+        rows.append({
+            "tag": tag, "ja": "", "aliases": "", "count": count,
+            "meta": {
+                "insert_text": original if insert_mode == "raw" else tag,
+                "source_file": filename, "source_type": source_type,
+                "insert_mode": insert_mode, "category": category,
+                "category_scheme": scheme or "unknown",
+                "post_count": _nonnegative_int(count) if source_type == "tag" and scheme in {"danbooru", "e621"} else None,
+            },
+        })
     return rows
 
 
 def _read_translation_map(paths):
     translations = {}
+    errors = []
     for path in paths:
-        with open(path, "r", encoding="utf-8-sig", newline="") as f:
-            reader = csv.DictReader(f)
-            for row in reader:
+        try:
+            file_translations = {}
+            for row in _csv_rows(path):
                 tag = (row.get("tag") or row.get("english") or "").strip()
-                ja = (row.get("ja") or row.get("jp") or row.get("japanese") or row.get("alias") or "").strip()
+                ja = (row.get("ja") or row.get("jp") or row.get("japanese") or row.get("translation") or row.get("alias") or "").strip()
                 aliases = (row.get("aliases") or row.get("alias") or "").strip()
                 if tag and (ja or aliases):
-                    translations[tag] = {"ja": ja, "aliases": aliases}
-    return translations
+                    file_translations[tag] = {"ja": ja, "aliases": aliases}
+            translations.update(file_translations)
+        except (OSError, UnicodeError, csv.Error) as error:
+            _LOG.warning("JP Assist: could not read %s: %s", os.path.basename(path), error)
+            errors.append(os.path.basename(path))
+    return translations, errors
 
 
 def _normalize(text):
@@ -216,24 +295,27 @@ def _count_value(row):
 
 
 def _clear_tag_cache():
-    global _TAG_CACHE_KEY, _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH
+    global _TAG_CACHE_KEY, _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH, _TAG_CACHE_ERRORS
     with _TAG_CACHE_LOCK:
         _TAG_CACHE_KEY = None
         _TAG_CACHE_ROWS = None
         _TAG_CACHE_SEARCH = None
+        _TAG_CACHE_ERRORS = ()
 
 
-def _load_cached_tag_data(source="both", tag_file="all", translation_file="all"):
-    global _TAG_CACHE_KEY, _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH
+def _load_cached_tag_data(source="both", tag_file="all", translation_file="all", tag_files=None, translation_files=None):
+    global _TAG_CACHE_KEY, _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH, _TAG_CACHE_ERRORS
 
     source = source if source in {"hf", "own", "both"} else "both"
-    priority_paths, fallback_paths = _resolve_tag_file_groups(source, tag_file)
+    priority_paths, fallback_paths = _resolve_tag_file_groups(source, tag_file, tag_files)
     tag_paths = priority_paths + fallback_paths
-    translation_paths = _resolve_translation_files(translation_file)
+    translation_paths = _resolve_translation_files(translation_file, translation_files)
     cache_key = (
         source,
         _safe_csv_name(tag_file) or "all",
         _safe_csv_name(translation_file) or "all",
+        tag_files is not None,
+        translation_files is not None,
         _file_signature(tag_paths),
         _file_signature(translation_paths),
     )
@@ -243,23 +325,36 @@ def _load_cached_tag_data(source="both", tag_file="all", translation_file="all")
             return _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH
 
         merged = {}
-        for path in fallback_paths:
-            for row in _read_tag_csv(path):
-                merged[row["tag"]] = row
-
+        errors = []
         priority_tags = set()
-        for path in priority_paths:
-            for row in _read_tag_csv(path):
+        tag_priorities = {}
+        load_paths = list(reversed(priority_paths)) if tag_files is not None else fallback_paths + priority_paths
+        for path in load_paths:
+            file_priority = priority_paths.index(path) if tag_files is not None else 0
+            try:
+                file_rows = _read_tag_csv(path)
+            except (OSError, UnicodeError, csv.Error) as error:
+                _LOG.warning("JP Assist: could not read %s: %s", os.path.basename(path), error)
+                errors.append(os.path.basename(path))
+                continue
+            for row in file_rows:
                 merged[row["tag"]] = row
-                priority_tags.add(row["tag"])
+                if path in priority_paths:
+                    priority_tags.add(row["tag"])
+                if tag_files is not None:
+                    tag_priorities[row["tag"]] = file_priority
 
-        translations = _read_translation_map(translation_paths)
+        translation_load_paths = list(reversed(translation_paths)) if translation_files is not None else translation_paths
+        translations, translation_errors = _read_translation_map(translation_load_paths)
+        errors.extend(translation_errors)
         for tag, text in translations.items():
             if tag in merged:
                 merged[tag]["ja"] = text["ja"]
                 merged[tag]["aliases"] = text["aliases"]
 
         rows = list(merged.values())
+        if tag_files is not None:
+            rows.sort(key=lambda row: tag_priorities[row["tag"]])
         has_priority = bool(priority_paths)
         search_rows = [
             (
@@ -267,23 +362,29 @@ def _load_cached_tag_data(source="both", tag_file="all", translation_file="all")
                 _normalize(row["tag"]),
                 _split_aliases(row),
                 _count_value(row),
-                0 if (not has_priority or row["tag"] in priority_tags) else 1,
+                tag_priorities[row["tag"]] if tag_files is not None else (0 if (not has_priority or row["tag"] in priority_tags) else 1),
             )
             for row in rows
         ]
 
+        # Failed files are retried, and a partial build never replaces a good cache.
+        if errors:
+            _TAG_CACHE_ERRORS = tuple(sorted(set(errors)))
+            return rows, search_rows
         _TAG_CACHE_KEY = cache_key
         _TAG_CACHE_ROWS = rows
         _TAG_CACHE_SEARCH = search_rows
+        _TAG_CACHE_ERRORS = ()
         return rows, search_rows
 
 
-def _read_tag_rows(source="both", tag_file="all", translation_file="all"):
-    rows, _ = _load_cached_tag_data(source, tag_file, translation_file)
+def _read_tag_rows(source="both", tag_file="all", translation_file="all", tag_files=None, translation_files=None):
+    rows, _ = _load_cached_tag_data(source, tag_file, translation_file, tag_files, translation_files)
     return rows
 
 
-def _search_tag_rows(query, source="both", tag_file="all", translation_file="all", sort_order="match", limit=20):
+def _search_tag_rows(query, source="both", tag_file="all", translation_file="all", sort_order="match", limit=20, search_jp=True, behavior="existing", tail="", tag_files=None, translation_files=None):
+    tail = _normalize(tail)
     query = _normalize(query)
     if not query:
         return []
@@ -294,15 +395,17 @@ def _search_tag_rows(query, source="both", tag_file="all", translation_file="all
         limit = 20
 
     sort_order = sort_order if sort_order in {"match", "count", "az"} else "match"
-    _, search_rows = _load_cached_tag_data(source, tag_file, translation_file)
+    _, search_rows = _load_cached_tag_data(source, tag_file, translation_file, tag_files, translation_files)
 
     def scored_rows():
         for row, tag, aliases, count, priority in search_rows:
-            if tag == query or query in aliases:
+            needle = tail if behavior == "csv" and tail and (row["meta"]["source_type"] == "natural_language" or row["meta"]["insert_mode"] == "word") else query
+            search_aliases = aliases if search_jp else ()
+            if tag == needle or needle in search_aliases:
                 score = 0
-            elif tag.startswith(query) or any(alias.startswith(query) for alias in aliases):
+            elif tag.startswith(needle) or any(alias.startswith(needle) for alias in search_aliases):
                 score = 1
-            elif query in tag or any(query in alias for alias in aliases):
+            elif needle in tag or any(needle in alias for alias in search_aliases):
                 score = 2
             else:
                 continue
@@ -418,30 +521,39 @@ def _update_hf_tag_file():
     return {"updated": False, "file": HF_TAG_FILE, "meta": local_meta}
 
 
-@server.PromptServer.instance.routes.get("/danbooru-tag-jp-assist/tags")
-async def get_danbooru_tag_jp_assist_tags(request):
-    source = request.query.get("source", "both")
-    tag_file = request.query.get("tag_file", "all")
-    translation_file = request.query.get("translation_file", "all")
-    query = request.query.get("q", "")
+def _dictionary_revision(source="both", tag_file="all", translation_file="all", tag_files=None, translation_files=None):
+    tag_paths = _resolve_tag_files(source, tag_file, tag_files)
+    translation_paths = _resolve_translation_files(translation_file, translation_files)
+    signature = (tag_files is not None, translation_files is not None, _file_signature(tag_paths), _file_signature(translation_paths))
+    return hashlib.sha256(repr(signature).encode("utf-8")).hexdigest()[:20]
 
+
+def _tag_response(params):
+    source = params.get("source", "both")
+    tag_file = params.get("tag_file", "all")
+    translation_file = params.get("translation_file", "all")
+    tag_files = _requested_files(params, "tag_files")
+    translation_files = _requested_files(params, "translation_files")
+    query = params.get("q", "")
+    revision = _dictionary_revision(source, tag_file, translation_file, tag_files, translation_files)
     if query:
-        sort_order = request.query.get("sort", "match")
-        limit = request.query.get("limit", "20")
-        tags = await asyncio.to_thread(
-            _search_tag_rows,
-            query,
-            source,
-            tag_file,
-            translation_file,
-            sort_order,
-            limit,
+        tags = _search_tag_rows(
+            query, source, tag_file, translation_file,
+            params.get("sort", "match"), params.get("limit", "20"),
+            params.get("search_jp", "1") != "0",
+            params.get("behavior", "existing"), params.get("tail", ""),
+            tag_files, translation_files,
         )
     else:
-        # Keep the no-query response for compatibility with older frontends.
-        tags = await asyncio.to_thread(_read_tag_rows, source, tag_file, translation_file)
+        tags = _read_tag_rows(source, tag_file, translation_file, tag_files, translation_files)
+    if revision != _dictionary_revision(source, tag_file, translation_file, tag_files, translation_files):
+        return {"tags": [], "retry": True, "revision": revision}
+    return {"tags": tags, "revision": revision, "errors": list(_TAG_CACHE_ERRORS)}
 
-    return web.json_response({"tags": tags})
+
+@server.PromptServer.instance.routes.get("/danbooru-tag-jp-assist/tags")
+async def get_danbooru_tag_jp_assist_tags(request):
+    return web.json_response(await asyncio.to_thread(_tag_response, dict(request.query)))
 
 
 @server.PromptServer.instance.routes.get("/jp-tag-autocomplete-test/tags")
@@ -449,11 +561,27 @@ async def get_legacy_jp_tag_autocomplete_tags(request):
     return await get_danbooru_tag_jp_assist_tags(request)
 
 
+@server.PromptServer.instance.routes.get("/danbooru-tag-jp-assist/revision")
+async def get_dictionary_revision(request):
+    return web.json_response({"revision": _dictionary_revision(
+        request.query.get("source", "both"), request.query.get("tag_file", "all"),
+        request.query.get("translation_file", "all"),
+        _requested_files(request.query, "tag_files"), _requested_files(request.query, "translation_files"),
+    ), "ordered_selection": True})
+
+
+@server.PromptServer.instance.routes.post("/danbooru-tag-jp-assist/reload")
+async def reload_dictionaries(request):
+    _clear_tag_cache()
+    return web.json_response({"reloaded": True})
+
+
 @server.PromptServer.instance.routes.get("/danbooru-tag-jp-assist/files")
 async def get_danbooru_tag_jp_assist_files(request):
     return web.json_response({
         "tag_files": _csv_file_names(TAG_FILES_DIR) + ["All"],
         "translation_files": _csv_file_names(TRANSLATION_FILES_DIR) + ["All"],
+        "ordered_selection": True,
     })
 
 

@@ -109,6 +109,16 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 
 ## CSV形式
 
+ヘッダー付きCSVに加え、ヘッダーなしの `tag,category,count,aliases` 形式も読み込めます。ヘッダーなしの4列目は別名として扱う位置で、挿入モードには使いません。不正なCSVはファイル単位で除外し、正常な辞書と通常入力を継続します。
+
+Settings → **Danbooru Tag JP Assist** 内の `Completion behavior` は初期値 `Existing` です。`CSV-aware` を選ぶと、CSVの任意列 `source_type` (`tag` / `natural_language` / `custom`)、`insert_mode` (`tag` / `phrase` / `word` / `raw`)、`category_scheme` を利用します。`tag` と `phrase` は既存のカンマ設定、`word` は空白のみ、`raw` はセルの文字列を変換せず挿入します。自然言語の `word` は複数語にも使えます。列のない利用者CSVは従来動作を維持し、同梱 `natural_language_tags.csv` はCSV-aware時に `natural_language` / `word` として扱います。
+
+日本語表示と `Use JP aliases for search` は独立しています。`Show TAG / NL / CUSTOM`、`Show source CSV`、`Show post count` は初期OFFです。投稿数は確認できる辞書由来の値だけを表示し、0件と不明を区別します。同名タグの優先CSV・Allでの採用順は維持し、別の辞書の投稿数やカテゴリを混ぜません。
+
+`Underscore exclusions` は `score_*` などのglobパターンをカンマまたは改行で指定できます。挿入文字列だけを保護し、ワイルドカードの実行はしません。`Reload dictionaries` はサーバーとブラウザーの検索キャッシュを無効化します。CSVの追加・削除後にファイル選択肢も更新する場合はブラウザーを再読込してください。
+
+IME変換中の確定キーは補完で消費しません。Escape、選択位置変更、設定変更、ノード削除で古い候補を無効化し、補完確定前にも入力と位置を確認します。通常のChromiumではネイティブ編集を使ってUndo履歴を保持します。他ブラウザーの代替編集経路はUndo対応を保証しません。
+
 タグファイル:
 
 ```csv
@@ -284,6 +294,19 @@ Not bundled:
 
 ## CSV Format
 
+Headerless `tag,category,count,aliases` files are supported; the fourth column is not an insertion mode. Malformed files are isolated from healthy dictionaries.
+
+All controls remain in Settings → **Danbooru Tag JP Assist**. `Completion behavior` defaults to `Existing`. Opt into `CSV-aware` to use optional `source_type`, `insert_mode`, and `category_scheme` columns. `tag` / `phrase` follow the comma preference, `word` inserts without a comma (including multi-word phrases), and `raw` preserves the decoded cell text. User CSVs without these columns retain tag behavior; the bundled natural-language dictionary uses word behavior in CSV-aware mode.
+
+Japanese search and display are independent. Source labels, source filenames and post counts default to hidden. Zero and unknown counts are distinct, and metadata belongs to the winning CSV row. Underscore exclusions accept comma/newline-separated glob patterns. Reload dictionaries clears both server and browser search caches and refreshes the ordered CSV checklists; reload the browser to refresh the legacy single-file dropdown options after adding/removing CSVs. Active IME composition, stale input, Escape and node removal cannot commit obsolete suggestions. Chromium uses native edits for undo; fallback editing on other browsers may not preserve native undo history.
+
+Developer checks (no additional dependencies):
+
+```text
+python -B tests/test_backend.py
+node --test tests/test_completion_core.mjs tests/test_autocomplete.mjs
+```
+
 Tag file:
 
 ```csv
@@ -308,6 +331,9 @@ For example, with `Suggestion count = 20`, if the selected CSV has only 7 matche
 
 ## Settings
 
+- `Tag selection mode` and `Translation selection mode`: independently choose the existing `All / single priority` (`All / single file` for translations) or `Selected CSVs only`. The default preserves existing settings.
+- `Selected tag CSVs (ordered)` and `Selected translation CSVs (ordered)`: check files in priority order, then use ↑ / ↓ to reorder. In selected mode only checked files are read. The first selected tag CSV wins duplicate rows and its matches precede later files before `Sort mode`; the first selected translation CSV wins duplicate translations. Empty tag selection gives no suggestions; empty translation selection gives no translations. Missing selections remain visible as unavailable and never fall back to All.
+- In selected mode the tag checklist replaces `Tag source` and `Tag file (priority)`, and the translation checklist replaces `Translation file`. Switching back restores those existing choices. Settings are global and do not add workflow fields. Restart ComfyUI and reload the browser after updating to enable the new backend behavior.
 - `Tag file (priority)`: one file in `tags/tag_files/` or `All`. The default is `All`. Selecting a file prioritizes matches from that file, then fills remaining suggestions from other files enabled by `Tag source`.
 - `Translation file`: one file in `tags/translation_files/` or `All`.
 - `Update Danbooru CSV from Hugging Face`: checks and updates `danbooru_tags.csv`.

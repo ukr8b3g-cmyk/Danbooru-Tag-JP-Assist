@@ -7,6 +7,7 @@ import * as core from '../web/lib/completion_core.js';
 class Element extends EventTarget {
   constructor() {super();this.style={display:'none'};this.children=[];this.isConnected=true;this.value='';this.attributes={};}
   setAttribute(name,value){this.attributes[name]=value;}
+  getAttribute(name){return this.attributes[name]??null;}
   append(...els){this.children.push(...els);}
   appendChild(el){this.append(el);return el;}
   replaceChildren(){this.children=[];}
@@ -28,6 +29,7 @@ const wait = ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const item = {tag:'blue',meta:{source_type:'natural_language',insert_mode:'word',insert_text:'blue'}};
 
 async function fixture({delay=0,orderedSelection=true}={}) {
+  const window=Object.assign(new EventTarget(),{innerWidth:1000,innerHeight:800});
   const document = new Element();
   document.body=new Element();
   document.createElement=()=>new Element();
@@ -54,7 +56,7 @@ async function fixture({delay=0,orderedSelection=true}={}) {
     if(fail)throw new Error('offline');
     return {ok:true,json:async()=>({tags:[item],revision})};
   };
-  const context=vm.createContext({app,core,document,Element,HTMLTextAreaElement:Textarea,AbortController,Event,InputEvent:Event,URLSearchParams,Map,Set,WeakMap,WeakSet,console,fetch,setTimeout,clearTimeout,window:{innerWidth:1000,innerHeight:800},requestAnimationFrame:fn=>setTimeout(fn,0),MutationObserver:class{observe(){}}});
+  const context=vm.createContext({app,core,document,Element,HTMLTextAreaElement:Textarea,AbortController,Event,InputEvent:Event,URLSearchParams,Map,Set,WeakMap,WeakSet,console,fetch,setTimeout,clearTimeout,window,requestAnimationFrame:fn=>setTimeout(fn,0),MutationObserver:class{observe(){}}});
   let source=await readFile(new URL('../web/danbooru_tag_jp_assist.js',import.meta.url),'utf8');
   source=source.replace(/^import .*$/gm,'').replace('const API_URLS', 'const {inputContext,snapshotMatches,insertionEdit}=core;\nconst API_URLS');
   vm.runInContext(source,context);
@@ -75,7 +77,7 @@ async function fixture({delay=0,orderedSelection=true}={}) {
     document.body.append(root);
     return root;
   };
-  return {document,node,area,popup,type,key,setting,calls,extension,setRevision:v=>revision=v,offline:()=>fail=true,definitions,mountFiles,settings};
+  return {window,document,node,area,popup,type,key,setting,calls,extension,setRevision:v=>revision=v,offline:()=>fail=true,definitions,mountFiles,settings};
 }
 
 test('Escape invalidates a pending search even before a popup exists',async()=>{
@@ -83,6 +85,33 @@ test('Escape invalidates a pending search even before a popup exists',async()=>{
 });
 test('cursor changes cannot commit an obsolete range',async()=>{
   const f=await fixture();f.type('blu');await wait(110);assert.ok(f.popup());f.area.setSelectionRange(1,1);const e=f.key('Enter');assert.equal(e.defaultPrevented,false);assert.equal(f.area.value,'blu');assert.equal(f.popup(),undefined);f.node.onRemoved();
+});
+test('window pointer events and blur do not commit pending suggestions',async()=>{
+  const f=await fixture({delay:50});
+  f.type('blu');await wait(95);
+  f.window.dispatchEvent(event('pointerdown',{clientX:20,clientY:20}));
+  f.document.activeElement=f.document.body;
+  f.area.dispatchEvent(event('blur',{relatedTarget:f.document.body}));
+  await wait(70);
+  assert.equal(f.popup(),undefined);
+  assert.equal(f.area.value,'blu');
+  f.node.onRemoved();
+  f.window.dispatchEvent(event('pointerup'));
+});
+test('candidate mouse selection inserts once and keeps the caret',async()=>{
+  const f=await fixture();f.setting('CompletionBehavior','csv');
+  f.type('blu');await wait(110);
+  const popup=f.popup();assert.ok(popup);
+  const candidate=descendants(popup).find(el=>el.style.cssText?.includes('cursor:pointer'));
+  assert.ok(candidate);
+  assert.equal(f.area.value,'blu');
+  const select=event('mousedown');candidate.dispatchEvent(select);
+  assert.equal(select.defaultPrevented,true);
+  assert.equal(f.area.value,'blue ');
+  assert.equal(f.area.selectionStart,5);
+  assert.equal(f.area.selectionEnd,5);
+  assert.equal(f.popup(),undefined);
+  f.node.onRemoved();
 });
 test('IME Enter is left to the input method and the next independent Enter commits',async()=>{
   const f=await fixture();f.setting('CompletionBehavior','csv');f.type('blu');await wait(100);f.area.dispatchEvent(event('compositionstart'));assert.equal(f.key('Enter',{isComposing:true}).defaultPrevented,false);f.area.dispatchEvent(event('compositionend'));await wait(110);assert.equal(f.key('Enter').defaultPrevented,false);f.area.dispatchEvent(event('keyup',{key:'Enter'}));assert.equal(f.key('Enter').defaultPrevented,true);assert.equal(f.area.value,'blue ');await wait(110);assert.equal(f.popup(),undefined);f.node.onRemoved();

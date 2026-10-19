@@ -1,6 +1,6 @@
 [project]
 name = "danbooru-tag-jp-assist"
-version = "0.2.0"
+version = "0.2.1"
 description = "Tag autocomplete for ComfyUI with Japanese aliases and English prompt vocabulary."
 readme = "README.md"
 # Applies to software; third-party data retains its own terms.

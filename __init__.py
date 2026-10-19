@@ -6,6 +6,7 @@ import logging
 import json
 import os
 import threading
+import tempfile
 import urllib.request
 
 import server
@@ -28,6 +29,11 @@ _TAG_CACHE_KEY = None
 _TAG_CACHE_ROWS = None
 _TAG_CACHE_SEARCH = None
 _TAG_CACHE_ERRORS = ()
+# Do not publish an incomplete dictionary over the last successful index.
+# Reuse failed selections until a file changes or Reload is explicitly requested.
+_TAG_PARTIAL_CACHE = {}
+_TAG_PARTIAL_CACHE_LIMIT = 2
+_HF_UPDATE_LOCK = threading.Lock()
 _LOG = logging.getLogger(__name__)
 
 
@@ -301,6 +307,7 @@ def _clear_tag_cache():
         _TAG_CACHE_ROWS = None
         _TAG_CACHE_SEARCH = None
         _TAG_CACHE_ERRORS = ()
+        _TAG_PARTIAL_CACHE.clear()
 
 
 def _load_cached_tag_data(source="both", tag_file="all", translation_file="all", tag_files=None, translation_files=None):
@@ -322,7 +329,12 @@ def _load_cached_tag_data(source="both", tag_file="all", translation_file="all",
 
     with _TAG_CACHE_LOCK:
         if cache_key == _TAG_CACHE_KEY and _TAG_CACHE_ROWS is not None:
-            return _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH
+            _TAG_CACHE_ERRORS = ()
+            return _TAG_CACHE_ROWS, _TAG_CACHE_SEARCH, ()
+        if cache_key in _TAG_PARTIAL_CACHE:
+            rows, search_rows, errors = _TAG_PARTIAL_CACHE[cache_key]
+            _TAG_CACHE_ERRORS = errors
+            return rows, search_rows, errors
 
         merged = {}
         errors = []
@@ -367,23 +379,28 @@ def _load_cached_tag_data(source="both", tag_file="all", translation_file="all",
             for row in rows
         ]
 
-        # Failed files are retried, and a partial build never replaces a good cache.
+        # A failed file cannot replace the healthy cache, but successful files
+        # need not be reparsed for every keystroke while the broken file is unchanged.
         if errors:
-            _TAG_CACHE_ERRORS = tuple(sorted(set(errors)))
-            return rows, search_rows
+            errors = tuple(sorted(set(errors)))
+            _TAG_PARTIAL_CACHE[cache_key] = (rows, search_rows, errors)
+            if len(_TAG_PARTIAL_CACHE) > _TAG_PARTIAL_CACHE_LIMIT:
+                _TAG_PARTIAL_CACHE.pop(next(iter(_TAG_PARTIAL_CACHE)))
+            _TAG_CACHE_ERRORS = errors
+            return rows, search_rows, errors
         _TAG_CACHE_KEY = cache_key
         _TAG_CACHE_ROWS = rows
         _TAG_CACHE_SEARCH = search_rows
         _TAG_CACHE_ERRORS = ()
-        return rows, search_rows
+        return rows, search_rows, ()
 
 
-def _read_tag_rows(source="both", tag_file="all", translation_file="all", tag_files=None, translation_files=None):
-    rows, _ = _load_cached_tag_data(source, tag_file, translation_file, tag_files, translation_files)
-    return rows
+def _read_tag_rows(source="both", tag_file="all", translation_file="all", tag_files=None, translation_files=None, _with_errors=False):
+    rows, _, errors = _load_cached_tag_data(source, tag_file, translation_file, tag_files, translation_files)
+    return (rows, errors) if _with_errors else rows
 
 
-def _search_tag_rows(query, source="both", tag_file="all", translation_file="all", sort_order="match", limit=20, search_jp=True, behavior="existing", tail="", tag_files=None, translation_files=None):
+def _search_tag_rows(query, source="both", tag_file="all", translation_file="all", sort_order="match", limit=20, search_jp=True, behavior="existing", tail="", tag_files=None, translation_files=None, _with_errors=False):
     tail = _normalize(tail)
     query = _normalize(query)
     if not query:
@@ -395,7 +412,7 @@ def _search_tag_rows(query, source="both", tag_file="all", translation_file="all
         limit = 20
 
     sort_order = sort_order if sort_order in {"match", "count", "az"} else "match"
-    _, search_rows = _load_cached_tag_data(source, tag_file, translation_file, tag_files, translation_files)
+    _, search_rows, errors = _load_cached_tag_data(source, tag_file, translation_file, tag_files, translation_files)
 
     def scored_rows():
         for row, tag, aliases, count, priority in search_rows:
@@ -419,21 +436,36 @@ def _search_tag_rows(query, source="both", tag_file="all", translation_file="all
                 key = (priority, score, -count, tag_name)
             yield key, row
 
-    return [row for _, row in heapq.nsmallest(limit, scored_rows(), key=lambda item: item[0])]
+    matches = [row for _, row in heapq.nsmallest(limit, scored_rows(), key=lambda item: item[0])]
+    return (matches, errors) if _with_errors else matches
 
 
 def _load_hf_meta():
     try:
         with open(HF_META_FILE, "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
+            meta = json.load(f)
+        return meta if isinstance(meta, dict) else {}
+    except (OSError, ValueError, TypeError):
         return {}
 
 
 def _save_hf_meta(meta):
     os.makedirs(TAG_FILES_DIR, exist_ok=True)
-    with open(HF_META_FILE, "w", encoding="utf-8") as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+    tmp_path = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", dir=TAG_FILES_DIR,
+                                         prefix=".hf_meta_", suffix=".tmp", delete=False) as f:
+            tmp_path = f.name
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, HF_META_FILE)
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
 
 
 def _hf_remote_meta():
@@ -456,22 +488,34 @@ def _hf_remote_meta():
 
 
 def _validate_downloaded_tag_file(path):
+    # Validate the *entire* file with the same strict CSV parser as search.
+    # A valid header followed by an unterminated quoted row must not replace
+    # the user's last working Danbooru dictionary.
     with open(path, "r", encoding="utf-8-sig", newline="") as f:
-        reader = csv.DictReader(f)
-        fields = set(reader.fieldnames or [])
-        if not ({"tag", "english"} & fields):
+        reader = csv.reader(f, strict=True)
+        fields = next(reader, [])
+        if not ({"tag", "english"} & set(fields)):
             raise ValueError("Downloaded CSV does not contain a tag or english column.")
+        tag_index = fields.index("tag") if "tag" in fields else fields.index("english")
+        has_tags = False
+        for row in reader:
+            if len(row) > tag_index and row[tag_index].strip():
+                has_tags = True
+        if not has_tags:
+            raise ValueError("Downloaded CSV does not contain any tags.")
 
 
 def _download_hf_tag_file(remote_meta):
     os.makedirs(TAG_FILES_DIR, exist_ok=True)
     path = os.path.join(TAG_FILES_DIR, HF_TAG_FILE)
-    tmp_path = path + ".tmp"
+    tmp_path = None
     total = 0
 
     try:
-        with urllib.request.urlopen(HF_TAG_URL, timeout=60) as response:
-            with open(tmp_path, "wb") as f:
+        with tempfile.NamedTemporaryFile(mode="wb", dir=TAG_FILES_DIR,
+                                         prefix=".hf_tags_", suffix=".tmp", delete=False) as output:
+            tmp_path = output.name
+            with urllib.request.urlopen(HF_TAG_URL, timeout=60) as response:
                 while True:
                     chunk = response.read(HF_DOWNLOAD_CHUNK)
                     if not chunk:
@@ -479,16 +523,17 @@ def _download_hf_tag_file(remote_meta):
                     total += len(chunk)
                     if total > HF_MAX_BYTES:
                         raise ValueError("Downloaded Danbooru CSV exceeds the 128 MiB safety limit.")
-                    f.write(chunk)
-
+                    output.write(chunk)
+            output.flush()
+            os.fsync(output.fileno())
         _validate_downloaded_tag_file(tmp_path)
         os.replace(tmp_path, path)
-    except Exception:
-        try:
-            os.remove(tmp_path)
-        except OSError:
-            pass
-        raise
+    finally:
+        if tmp_path is not None:
+            try:
+                os.unlink(tmp_path)
+            except FileNotFoundError:
+                pass
 
     remote_meta["local_size"] = str(os.path.getsize(path))
     _save_hf_meta(remote_meta)
@@ -497,28 +542,31 @@ def _download_hf_tag_file(remote_meta):
 
 
 def _update_hf_tag_file():
-    path = os.path.join(TAG_FILES_DIR, HF_TAG_FILE)
-    try:
-        remote_meta = _hf_remote_meta()
-    except Exception as e:
-        return {
-            "updated": False,
-            "file": HF_TAG_FILE,
-            "error": str(e),
-            "using_existing": os.path.isfile(path),
-        }
+    # HTTP endpoints call this on a worker thread: never wait for this lock on
+    # the asyncio event loop. Serialized HEAD/download/metadata ensure parity.
+    with _HF_UPDATE_LOCK:
+        path = os.path.join(TAG_FILES_DIR, HF_TAG_FILE)
+        try:
+            remote_meta = _hf_remote_meta()
+        except Exception as e:
+            return {
+                "updated": False,
+                "file": HF_TAG_FILE,
+                "error": str(e),
+                "using_existing": os.path.isfile(path),
+            }
 
-    local_meta = _load_hf_meta()
-    needs_update = not os.path.isfile(path)
-    for key in ("etag", "last_modified", "content_length"):
-        if remote_meta.get(key) and remote_meta.get(key) != local_meta.get(key):
-            needs_update = True
-            break
+        local_meta = _load_hf_meta()
+        needs_update = not os.path.isfile(path)
+        for key in ("etag", "last_modified", "content_length"):
+            if remote_meta.get(key) and remote_meta.get(key) != local_meta.get(key):
+                needs_update = True
+                break
 
-    if needs_update:
-        meta = _download_hf_tag_file(remote_meta)
-        return {"updated": True, "file": HF_TAG_FILE, "meta": meta}
-    return {"updated": False, "file": HF_TAG_FILE, "meta": local_meta}
+        if needs_update:
+            meta = _download_hf_tag_file(remote_meta)
+            return {"updated": True, "file": HF_TAG_FILE, "meta": meta}
+        return {"updated": False, "file": HF_TAG_FILE, "meta": local_meta}
 
 
 def _dictionary_revision(source="both", tag_file="all", translation_file="all", tag_files=None, translation_files=None):
@@ -537,18 +585,18 @@ def _tag_response(params):
     query = params.get("q", "")
     revision = _dictionary_revision(source, tag_file, translation_file, tag_files, translation_files)
     if query:
-        tags = _search_tag_rows(
+        tags, errors = _search_tag_rows(
             query, source, tag_file, translation_file,
             params.get("sort", "match"), params.get("limit", "20"),
             params.get("search_jp", "1") != "0",
             params.get("behavior", "existing"), params.get("tail", ""),
-            tag_files, translation_files,
+            tag_files, translation_files, _with_errors=True,
         )
     else:
-        tags = _read_tag_rows(source, tag_file, translation_file, tag_files, translation_files)
+        tags, errors = _read_tag_rows(source, tag_file, translation_file, tag_files, translation_files, _with_errors=True)
     if revision != _dictionary_revision(source, tag_file, translation_file, tag_files, translation_files):
         return {"tags": [], "retry": True, "revision": revision}
-    return {"tags": tags, "revision": revision, "errors": list(_TAG_CACHE_ERRORS)}
+    return {"tags": tags, "revision": revision, "errors": list(errors)}
 
 
 @server.PromptServer.instance.routes.get("/danbooru-tag-jp-assist/tags")
@@ -572,7 +620,7 @@ async def get_dictionary_revision(request):
 
 @server.PromptServer.instance.routes.post("/danbooru-tag-jp-assist/reload")
 async def reload_dictionaries(request):
-    _clear_tag_cache()
+    await asyncio.to_thread(_clear_tag_cache)
     return web.json_response({"reloaded": True})
 
 

@@ -43,6 +43,7 @@ async function fixture({delay=0,orderedSelection=true}={}) {
   const settings=new Map();
   const definitions=new Map();
   let extension;
+  let observerCallback = null;
   let revision='r1';
   let fail=false;
   const calls=[];
@@ -56,7 +57,7 @@ async function fixture({delay=0,orderedSelection=true}={}) {
     if(fail)throw new Error('offline');
     return {ok:true,json:async()=>({tags:[item],revision})};
   };
-  const context=vm.createContext({app,core,document,Element,HTMLTextAreaElement:Textarea,AbortController,Event,InputEvent:Event,URLSearchParams,Map,Set,WeakMap,WeakSet,console,fetch,setTimeout,clearTimeout,window,requestAnimationFrame:fn=>setTimeout(fn,0),MutationObserver:class{observe(){}}});
+  const context=vm.createContext({app,core,document,Element,HTMLTextAreaElement:Textarea,AbortController,Event,InputEvent:Event,URLSearchParams,Map,Set,WeakMap,WeakSet,console,fetch,setTimeout,clearTimeout,window,requestAnimationFrame:fn=>setTimeout(fn,0),MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}}});
   let source=await readFile(new URL('../web/danbooru_tag_jp_assist.js',import.meta.url),'utf8');
   source=source.replace(/^import .*$/gm,'').replace('const API_URLS', 'const {inputContext,snapshotMatches,insertionEdit}=core;\nconst API_URLS');
   vm.runInContext(source,context);
@@ -77,7 +78,8 @@ async function fixture({delay=0,orderedSelection=true}={}) {
     document.body.append(root);
     return root;
   };
-  return {window,document,node,area,popup,type,key,setting,calls,extension,setRevision:v=>revision=v,offline:()=>fail=true,definitions,mountFiles,settings};
+  return {window,document,node,area,popup,type,key,setting,calls,extension,setRevision:v=>revision=v,offline:()=>fail=true,definitions,mountFiles,settings,
+    notifyMutation:(addedNodes)=>observerCallback?.([{addedNodes}])};
 }
 
 test('Escape invalidates a pending search even before a popup exists',async()=>{
@@ -177,4 +179,35 @@ test('selection order changes invalidate pending searches and cached results',as
 test('selected mode never silently searches all files on a backend needing restart',async()=>{
   const f=await fixture({orderedSelection:false});f.setting('TagSelectionMode','selected');f.setting('TagFiles',['a.csv']);f.type('blu');await wait(110);
   assert.equal(f.popup(),undefined);assert.equal(f.calls.filter(c=>c.url.includes('/tags?')).length,0);f.node.onRemoved();
+});
+
+// Appearance preferences must not trigger expensive dictionary reloads.
+test('appearance changes re-render a visible popup without repeating tag search',async()=>{
+  const f=await fixture();f.type('blu');await wait(115);
+  assert.ok(f.popup());
+  const before=f.calls.filter(call=>call.url.includes('/tags?')).length;
+  f.setting('PopupTheme','amber');
+  assert.equal(f.popup().style.borderColor,'#d89b28');
+  f.setting('ShowJapanese',false);
+  assert.ok(f.popup());
+  f.key('Escape'); f.type('blu');await wait(115);
+  assert.equal(f.calls.filter(call=>call.url.includes('/tags?')).length,before);
+  f.node.onRemoved();
+});
+
+test('body mutation batches delayed node scans into a single animation frame',async()=>{
+  const f=await fixture();
+  let inspected=0;const extra=[];
+  for(let i=0;i<25;i++){
+    const n={get widgets(){inspected++;return [];}};
+    extra.push(n);f.extension.nodeCreated(n);
+  }
+  await wait(15);
+  inspected=0;
+  f.notifyMutation([new Textarea()]);
+  assert.equal(inspected,0, 'mutation observer should not scan synchronously');
+  await wait(15);
+  assert.equal(inspected,25);
+  for(const n of extra)n.onRemoved();
+  f.node.onRemoved();
 });

@@ -1,4 +1,8 @@
 import asyncio
+import csv
+import io
+import threading
+import time
 import importlib.util
 import json
 import os
@@ -7,6 +11,7 @@ import sys
 import tempfile
 import types
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 routes = types.SimpleNamespace(get=lambda path: lambda fn: fn, post=lambda path: lambda fn: fn)
@@ -245,6 +250,131 @@ class Dictionaries(unittest.TestCase):
         result = backend._tag_response({'q': 'a', 'tag_files': '["broken.csv"]'})
         self.assertEqual(result['tags'], [])
         self.assertEqual(result['errors'], ['broken.csv'])
+
+
+    def test_full_download_validation_rejects_late_malformed_row_atomically(self):
+        name = backend.HF_TAG_FILE
+        destination = Path(backend.TAG_FILES_DIR) / name
+        destination.write_bytes(b'tag,count\nold_good,1\n')
+        meta = Path(backend.TAG_FILES_DIR) / '.danbooru_tags_meta.json'
+        meta.write_text('{"etag":"old"}', encoding='utf-8')
+        payload = b'tag,count\nfirst_good,2\nsecond_good,3\n"unterminated\n'
+        with patch.object(backend, 'HF_META_FILE', str(meta)), patch.object(backend.urllib.request, 'urlopen', return_value=io.BytesIO(payload)):
+            with self.assertRaises(csv.Error):
+                backend._download_hf_tag_file({'etag': 'bad'})
+        self.assertEqual(destination.read_bytes(), b'tag,count\nold_good,1\n')
+        self.assertEqual(meta.read_text(encoding='utf-8'), '{"etag":"old"}')
+        self.assertEqual(list(Path(backend.TAG_FILES_DIR).glob('.hf_tags_*.tmp')), [])
+        self.assertEqual(backend._tag_response({'q':'old','tag_files':'["danbooru_tags.csv"]','translation_files':'[]'})['tags'][0]['tag'], 'old_good')
+
+    def test_parallel_hf_checks_are_serialized_and_share_one_complete_result(self):
+        destination = Path(backend.TAG_FILES_DIR) / backend.HF_TAG_FILE
+        destination.write_bytes(b'tag,count\nold,1\n')
+        meta_path = Path(backend.TAG_FILES_DIR) / '.danbooru_tags_meta.json'
+        entered = threading.Event()
+        release = threading.Event()
+        calls = []
+        failures = []
+        results = {}
+        data = b'tag,count\nnewer,9\n'
+        def urlopen(*_args, **_kwargs):
+            calls.append('download')
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError('test coordination failure')
+            return io.BytesIO(data)
+        def run(name):
+            try:
+                results[name] = backend._update_hf_tag_file()
+            except Exception as exc:
+                failures.append(exc)
+        with patch.object(backend, 'HF_META_FILE', str(meta_path)), patch.object(backend, '_hf_remote_meta', return_value={'etag': 'v2'}), patch.object(backend.urllib.request, 'urlopen', side_effect=urlopen):
+            first = threading.Thread(target=run, args=('one',), daemon=True)
+            second = threading.Thread(target=run, args=('two',), daemon=True)
+            first.start()
+            self.assertTrue(entered.wait(3))
+            second.start()
+            time.sleep(.04)
+            release.set()
+            first.join(5)
+            second.join(5)
+        self.assertFalse(first.is_alive() or second.is_alive())
+        self.assertFalse(failures)
+        self.assertTrue(results['one']['updated'])
+        self.assertFalse(results['two']['updated'])
+        self.assertEqual(calls, ['download'])
+        self.assertEqual(destination.read_bytes(), data)
+        self.assertEqual(json.loads(meta_path.read_text())['etag'], 'v2')
+        self.assertEqual(list(Path(backend.TAG_FILES_DIR).glob('.hf_tags_*.tmp')), [])
+        self.assertEqual(list(Path(backend.TAG_FILES_DIR).glob('.hf_meta_*.tmp')), [])
+
+    def test_broken_csv_cache_does_not_reparse_good_files_and_errors_are_scoped(self):
+        self.tags('good.csv', 'tag,count\nvalid,1\n')
+        broken = self.tags('broken.csv', 'tag,count\n"unfinished\n')
+        good_params = {'q':'valid', 'tag_files':'["good.csv"]', 'translation_files':'[]'}
+        bad_params = {'q':'valid', 'tag_files':'["good.csv","broken.csv"]', 'translation_files':'[]'}
+        read_calls = []
+        original = backend._read_tag_csv
+        def counted(path):
+            read_calls.append(os.path.basename(path))
+            return original(path)
+        with patch.object(backend, '_read_tag_csv', side_effect=counted):
+            good_first = backend._tag_response(good_params)
+            for _ in range(4):
+                bad = backend._tag_response(bad_params)
+            good_again = backend._tag_response(good_params)
+        self.assertEqual(read_calls.count('good.csv'), 2)  # One per distinct selection.
+        self.assertEqual(read_calls.count('broken.csv'), 1)
+        self.assertEqual([r['tag'] for r in bad['tags']], ['valid'])
+        self.assertEqual(bad['errors'], ['broken.csv'])
+        self.assertEqual(good_first['errors'], [])
+        self.assertEqual(good_again['errors'], [])
+        broken.write_text('tag,count\nrepaired,2\n', encoding='utf-8')
+        repaired = backend._tag_response({**bad_params,'q':'repaired'})
+        self.assertEqual(repaired['errors'], [])
+        self.assertEqual([r['tag'] for r in repaired['tags']], ['repaired'])
+
+    def test_explicit_reload_clears_partial_cache(self):
+        self.tags('good.csv', 'tag,count\nvalid,1\n')
+        self.tags('broken.csv', 'tag,count\n"unfinished\n')
+        params = {'q':'valid', 'tag_files':'["good.csv","broken.csv"]', 'translation_files':'[]'}
+        backend._tag_response(params)
+        self.assertTrue(backend._TAG_PARTIAL_CACHE)
+        asyncio.run(backend.reload_dictionaries(types.SimpleNamespace(query={})))
+        self.assertEqual(backend._TAG_PARTIAL_CACHE, {})
+
+    def test_reload_does_not_block_asyncio_loop_when_csv_lock_is_held(self):
+        held = threading.Event()
+        def hold_lock():
+            with backend._TAG_CACHE_LOCK:
+                held.set()
+                time.sleep(.23)
+        holder = threading.Thread(target=hold_lock)
+        holder.start()
+        self.assertTrue(held.wait(2))
+        async def run():
+            started = time.perf_counter()
+            async def heartbeat():
+                await asyncio.sleep(.015)
+                return time.perf_counter() - started
+            beat = asyncio.create_task(heartbeat())
+            await backend.reload_dictionaries(types.SimpleNamespace(query={}))
+            return await beat
+        elapsed = asyncio.run(run())
+        holder.join(2)
+        self.assertLess(elapsed, .12, 'reload blocked the event loop')
+
+    def test_non_object_hf_metadata_is_ignored_and_rewritten(self):
+        dest = Path(backend.TAG_FILES_DIR) / backend.HF_TAG_FILE
+        dest.write_bytes(b'tag,count\nold,1\n')
+        meta = Path(backend.TAG_FILES_DIR) / '.danbooru_tags_meta.json'
+        meta.write_text('[]', encoding='utf-8')
+        with patch.object(backend, 'HF_META_FILE', str(meta)), patch.object(backend, '_hf_remote_meta', return_value={'etag':'fresh'}), patch.object(backend.urllib.request, 'urlopen', return_value=io.BytesIO(b'tag,count\nnew,9\n')):
+            self.assertEqual(backend._load_hf_meta(), {})
+            updated = backend._update_hf_tag_file()
+        self.assertTrue(updated['updated'])
+        self.assertEqual(dest.read_bytes(), b'tag,count\nnew,9\n')
+        self.assertEqual(json.loads(meta.read_text())['etag'], 'fresh')
 
 
 if __name__ == '__main__':

@@ -76,8 +76,19 @@ function invalidateResults() {
   for (const controller of controllers) controller.invalidate();
 }
 
+const APPEARANCE_ONLY_SETTINGS = new Set([
+  SETTINGS.showSourceType, SETTINGS.showSourceFile, SETTINGS.showPostCount,
+  SETTINGS.showJapanese, SETTINGS.popupTheme,
+]);
+
 function addSetting(definition) {
-  app.ui?.settings?.addSetting?.({ ...definition, onChange: invalidateResults });
+  app.ui?.settings?.addSetting?.({ ...definition, onChange: () => {
+    if (APPEARANCE_ONLY_SETTINGS.has(definition.id)) {
+      for (const controller of controllers) controller.refreshAppearance();
+    } else {
+      invalidateResults();
+    }
+  }});
 }
 
 function requestParams(query, tail = "") {
@@ -374,7 +385,9 @@ function ensureGlobalDismissHandler() {
       if (!controller.textarea.isConnected) controller.destroy();
     }
     if (records.some(record => [...record.addedNodes].some(el => el instanceof HTMLTextAreaElement || (el instanceof Element && el.querySelector("textarea"))))) {
-      for (const node of nodes) scheduleNodeTextareaScan(node);
+      // Batch delayed DOM widget discovery into one frame; nodeCreated and
+      // loadedGraphNode still scan immediately to preserve normal attachment.
+      for (const node of nodes) scheduleNodeTextareaScan(node, true);
     }
   }).observe(document.body, {childList: true, subtree: true});
 }
@@ -445,7 +458,11 @@ function attachAutocomplete(textarea, node) {
     finally { committing = false; invalidate(); }
   }
 
-  const controller = {textarea, popup, hide, invalidate, destroy, selectionChanged};
+  function refreshAppearance() {
+    if (!destroyed && items.length && popup.style.display !== "none") render();
+  }
+
+  const controller = {textarea, popup, hide, invalidate, destroy, selectionChanged, refreshAppearance};
   controllers.add(controller);
   textareaControllers.set(textarea, controller);
   if (!nodeControllers.has(node)) nodeControllers.set(node, new Set());
@@ -588,7 +605,7 @@ function attachNodeTextareas(node) {
   }
 }
 
-function scheduleNodeTextareaScan(node) {
+function scheduleNodeTextareaScan(node, frameOnly = false) {
   if (!node || removedNodes.has(node)) return;
   nodes.add(node);
   if (!nodeControllers.has(node)) {
@@ -601,13 +618,14 @@ function scheduleNodeTextareaScan(node) {
       return onRemoved?.apply(this, args);
     };
   }
-  attachNodeTextareas(node);
-  if (!node || scheduledNodeScans.has(node) || typeof requestAnimationFrame !== "function") return;
-  scheduledNodeScans.add(node);
-  requestAnimationFrame(() => {
-    scheduledNodeScans.delete(node);
-    if (!removedNodes.has(node)) attachNodeTextareas(node);
-  });
+  if (!frameOnly) attachNodeTextareas(node);
+  if (!scheduledNodeScans.has(node) && typeof requestAnimationFrame === "function") {
+    scheduledNodeScans.add(node);
+    requestAnimationFrame(() => {
+      scheduledNodeScans.delete(node);
+      if (!removedNodes.has(node)) attachNodeTextareas(node);
+    });
+  }
 }
 
 async function addSettings() {

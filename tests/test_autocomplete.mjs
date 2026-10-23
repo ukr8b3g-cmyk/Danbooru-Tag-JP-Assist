@@ -28,7 +28,7 @@ const event = (name,props={})=>Object.assign(new Event(name,{cancelable:true}),p
 const wait = ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const item = {tag:'blue',meta:{source_type:'natural_language',insert_mode:'word',insert_text:'blue'}};
 
-async function fixture({delay=0,orderedSelection=true}={}) {
+async function fixture({delay=0,orderedSelection=true,savedSort}={}) {
   const window=Object.assign(new EventTarget(),{innerWidth:1000,innerHeight:800});
   const document = new Element();
   document.body=new Element();
@@ -40,14 +40,14 @@ async function fixture({delay=0,orderedSelection=true}={}) {
     area.dispatchEvent(event('input',{inputType:'insertText'}));
     return true;
   };
-  const settings=new Map();
+  const settings=new Map(savedSort === undefined ? [] : [["DanbooruTagJPAssist.SortOrder",savedSort]]);
   const definitions=new Map();
   let extension;
   let observerCallback = null;
   let revision='r1';
   let fail=false;
   const calls=[];
-  const app={ui:{settings:{addSetting(def){definitions.set(def.id,def);if(typeof def.type!=='function') settings.set(def.id,def.defaultValue);},getSettingValue(id){return settings.get(id);}}},registerExtension(ext){extension=ext;}};
+  const app={ui:{settings:{addSetting(def){definitions.set(def.id,def);if(typeof def.type!=='function' && !settings.has(def.id)) settings.set(def.id,def.defaultValue);},getSettingValue(id){return settings.get(id);}}},registerExtension(ext){extension=ext;}};
   const fetch=async (url,options)=>{
     calls.push({url,signal:options.signal});
     if(url.includes('/files'))return {ok:true,json:async()=>({tag_files:['a.csv','b.csv','All'],translation_files:['ja.csv','nl.csv','All'],ordered_selection:orderedSelection})};
@@ -210,4 +210,51 @@ test('body mutation batches delayed node scans into a single animation frame',as
   assert.equal(inspected,25);
   for(const n of extra)n.onRemoved();
   f.node.onRemoved();
+});
+
+// Model the document-level outside-widget handler used by ComfyUI DomWidget.
+function mouseDownThroughDocument(target, document) {
+  const e=event('mousedown');
+  let stopped=false;
+  const stop=e.stopPropagation.bind(e);
+  e.stopPropagation=()=>{stopped=true;stop();};
+  target.dispatchEvent(e);
+  if(!stopped) {
+    const bubbled=event('mousedown');
+    Object.defineProperty(bubbled,'target',{value:target});
+    document.dispatchEvent(bubbled);
+  }
+}
+
+test('candidate selection keeps focus through ComfyUI outside-widget dismissal',async()=>{
+  const f=await fixture();f.setting('CompletionBehavior','csv');
+  f.document.addEventListener('mousedown',e=>{
+    if(!f.area.contains(e.target)) {
+      f.document.activeElement=f.document.body;
+      f.area.dispatchEvent(event('blur'));
+    }
+  });
+  f.type('blu');await wait(110);
+  const candidate=descendants(f.popup()).find(el=>el.style.cssText?.includes('cursor:pointer'));
+  mouseDownThroughDocument(candidate,f.document);
+  assert.equal(f.document.activeElement,f.area);
+  assert.equal(f.area.value,'blue ');
+  f.document.execCommand('insertText',false,'sky');
+  assert.equal(f.area.value,'blue sky');
+  mouseDownThroughDocument(f.document.body,f.document);
+  assert.equal(f.document.activeElement,f.document.body);
+  await wait(110);
+  assert.equal(f.popup(),undefined);
+  f.node.onRemoved();
+});
+
+test('count is the default search order while saved choices win',async()=>{
+  for(const savedSort of [undefined,'match','az']) {
+    const f=await fixture({savedSort});
+    assert.equal(f.definitions.get('DanbooruTagJPAssist.SortOrder').defaultValue,'count');
+    f.type('blu');await wait(110);
+    const request=f.calls.find(call=>call.url.includes('/tags?'));
+    assert.equal(new URL(request.url,'http://localhost').searchParams.get('sort'),savedSort??'count');
+    f.node.onRemoved();
+  }
 });

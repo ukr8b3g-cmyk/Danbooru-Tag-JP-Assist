@@ -27,4 +27,4 @@ jobs:
       - name: Test CSV parsing and search
         run: python -B tests/test_backend.py
       - name: Test completion and input lifecycle
-        run: node --test tests/test_completion_core.mjs tests/test_autocomplete.mjs
+        run: node --test tests/test_completion_core.mjs tests/test_autocomplete.mjs tests/test_prompt_format.mjs tests/test_tooltip_cleanup.mjs

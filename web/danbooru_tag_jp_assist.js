@@ -1,6 +1,9 @@
 import { app } from "/scripts/app.js";
 import { inputContext, snapshotMatches, insertionEdit } from "./lib/completion_core.js";
 
+import { installFormatting } from "./lib/format_ui.js";
+import { installTooltipCleanup } from "./lib/tooltip_cleanup.js";
+
 const API_URLS = ["/danbooru-tag-jp-assist/tags", "/jp-tag-autocomplete-test/tags"];
 const FILES_API_URLS = ["/danbooru-tag-jp-assist/files", "/jp-tag-autocomplete-test/files"];
 const HF_UPDATE_API_URLS = ["/danbooru-tag-jp-assist/hf-update", "/jp-tag-autocomplete-test/hf-update"];
@@ -45,7 +48,7 @@ const DEFAULTS = {
   preserveFormatting: true,
   showJapanese: true,
   spacesForUnderscores: true,
-  sortOrder: "match",
+  sortOrder: "count",
   tagSource: "both",
   popupTheme: "cyan",
   tagFile: "All",
@@ -60,6 +63,7 @@ const resultCache = new Map();
 const scheduledNodeScans = new WeakSet();
 let fileListCache = null;
 let activeAutocomplete = null;
+let formattingActive = false;
 let globalDismissInstalled = false;
 let settingsRevision = 0;
 let dictionaryRevision = null;
@@ -453,6 +457,8 @@ function attachAutocomplete(textarea, node) {
   function commit(item, event) {
     if (!canCommit()) { invalidate(); return; }
     event.preventDefault();
+    // ComfyUI's document mousedown handler blurs widgets clicked from outside.
+    if (event.type === "mousedown") event.stopPropagation();
     committing = true;
     try { insertTag(textarea, token, item); }
     finally { committing = false; invalidate(); }
@@ -462,7 +468,7 @@ function attachAutocomplete(textarea, node) {
     if (!destroyed && items.length && popup.style.display !== "none") render();
   }
 
-  const controller = {textarea, popup, hide, invalidate, destroy, selectionChanged, refreshAppearance};
+  const controller = {textarea, node, popup, hide, invalidate, destroy, selectionChanged, refreshAppearance};
   controllers.add(controller);
   textareaControllers.set(textarea, controller);
   if (!nodeControllers.has(node)) nodeControllers.set(node, new Set());
@@ -553,7 +559,7 @@ function attachAutocomplete(textarea, node) {
 
   function scheduleUpdate() {
     invalidate();
-    if (committing || composing || destroyed) return;
+    if (committing || composing || destroyed || formattingActive) return;
     const serial = requestSerial;
     updateTimer = setTimeout(() => { updateTimer = null; void update(serial); }, AUTOCOMPLETE_DEBOUNCE_MS);
   }
@@ -562,7 +568,7 @@ function attachAutocomplete(textarea, node) {
     if (ev.isComposing) { invalidate(); return; }
     scheduleUpdate();
   });
-  listen("focus", () => { invalidate(); void update(requestSerial); });
+  listen("focus", () => { invalidate(); if (!formattingActive) void update(requestSerial); });
   listen("blur", invalidate);
   listen("select", selectionChanged);
   listen("compositionstart", () => { composing = true; compositionKeyPending = true; invalidate(); });
@@ -799,6 +805,13 @@ async function maybeUpdateHfFile() {
 
 app.registerExtension({
   name: EXT_NAME,
+  setup() {
+    installTooltipCleanup();
+    installFormatting(app, {getControllers: () => controllers,
+      begin: () => { formattingActive = true; for (const c of controllers) c.invalidate(); },
+      end: () => { formattingActive = false; },
+    });
+  },
   async init() {
     ensureGlobalDismissHandler();
     await addSettings();

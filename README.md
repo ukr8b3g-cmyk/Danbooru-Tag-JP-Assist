@@ -6,13 +6,24 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 [English README](#english-readme)
 
+## What's New — v0.3.0（2026-10-23）
+
+- **上部操作バーにFormatを追加**：ボタンを押すだけでプロンプトの余分なカンマ・空白を整えます。入力欄では **Alt + Shift + F** でも実行できます。
+- **初期対象はAll recognized prompt inputs**：現在のワークフロー内の認識できるプロンプト欄を一括整形。現在欄／選択文字列、選択ノードにも切り替えられます。保存済みの対象設定は維持します。
+- **設定は既存Settingsに集約**：`Danbooru Tag JP Assist → Formatting`から、重複削除・アンダースコア変換・行末カンマ追加を個別にON/OFFできます。3つとも初期OFFです。詳しい手順は[プロンプト整形](#プロンプト整形)を参照してください。
+- **特殊タグ・Undo・フォーカスを保護**：重み、LoRA／Embedding、ワイルドカード等を維持し、整形後も続けて入力できます。Undo／Redoは入力欄ごとに利用できます。
+- **補完操作を改善**：候補をマウスで確定した後も入力フォーカスを維持。Sort modeの初期値を`Priority / count`に変更し、保存済みの並び順は維持します。
+- **表示不具合を修正**：新しいComfyUI操作バーでもFormatを表示。Settingsを閉じた後に残る重複・参照元消失の説明ポップアップを除去します。
+
+ノードID、ワークフロー形式、CSV選択順は変更しません。入力中やQueue実行時に自動整形する機能ではありません。
+
 ## 配布
 
 正式版は [GitHub Releases](https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist/releases) から取得できます。Comfy Registryへの公開・審査状態はGitHub ActionsとRegistry側で確認してください。Git cloneからのインストールも利用できます。
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- バージョン: `0.2.1`
+- バージョン: `0.3.0`
 - ComfyUI の Python 環境で動作します。`server` と `aiohttp` は ComfyUI 側の環境を使用するため、追加の pip 依存は宣言していません。
 - 配布には本体 Python、`web/`、下記の同梱タグ5件・翻訳2件のCSV、README、LICENSE、THIRD_PARTY_NOTICES を含めます。`.comfyignore` は実行時ダウンロード、取得メタデータ、一時ファイル、利用者が追加したデータを除外します。公開準備は利用者データのないクリーンな checkout で行ってください。
 - MIT はソースコードに適用され、第三者データの利用条件を置き換えません。[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
@@ -91,6 +102,37 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 - `merged_translations_dedup.csv` は Danbooru タグ用の日本語別名です。
 - `natural_language_ja.csv` は自然言語辞書用の日本語別名です。
 - CSVはサーバー側でキャッシュされます。大きな `All` 構成では最初の検索だけ読み込みに時間がかかる場合があります。
+
+## プロンプト整形
+
+通常画面の**上部操作バーにある Format** ボタン、または入力欄で **Alt + Shift + F** を押すと整形します。設定は **Settings → Danbooru Tag JP Assist → Formatting** にまとめています。この中にもFormatボタンがあります。
+
+初期状態では、上部のFormatボタンを押すと、現在のワークフロー内の認識できるプロンプト欄をまとめて整形します。1つの欄だけを整える場合は、Settingsで対象を`Current input / selection`に変更し、入力欄をクリックしてからFormatを押してください。文字列の一部なら範囲選択して実行します。Settingsを毎回開く必要はありません。スイッチを切り替えただけでは文章は変わりません。
+
+| 設定 | 実行時の動作 |
+| --- | --- |
+| Append comma on newline | 次の行にも文章があるとき、前の行末にカンマを追加。最後の行には追加しません。 |
+| Replace underscores | `blue_hair` → `blue hair`。特殊タグと除外パターンは維持。 |
+| Remove duplicate plain tags | 同じ行の `smile, smile` → `smile`。別の行や重み付きタグは削除しません。 |
+| Format target: Current input / selection | 最後にクリックした入力欄、またはその選択文字列だけを整形。 |
+| Format target: Selected nodes | 選択ノード内の対応するプロンプト欄を一括整形。 |
+| Format target: All recognized prompt inputs | 初期値。現在のワークフロー内の、認識できるプロンプト欄を一括整形。 |
+
+3つのスイッチがすべてOFFでも、`1girl,,  solo , smile` → `1girl, solo, smile` のように余分なカンマ・空白を整えます。戻すときは対象の入力欄で **Ctrl + Z** を押します。
+
+- `Format target`：現在の入力欄／選択文字列、選択ノード、認識できる全プロンプト欄（初期値）を選べます。保存済みの選択は維持します。以前の初期値を保存している場合は、一度`All recognized prompt inputs`を選んでください。一括対象は既知のTextEncode・Prompt・String等の入力欄で、Note・JSON・コード欄は除外します。未対応のノードは現在の入力欄を指定してください。
+- 通常はカンマの連続・前後の空白を整え、改行・空行・インデントを維持します。
+- `Remove duplicate plain tags`、`Replace underscores`、`Append comma on newline` は個別に有効化できます。すべて初期OFFです。重複削除は同じ行の通常タグだけに適用します。行末カンマは後続行がある場合に追加し、BREAK等の制御行や文末の句読点は保護します。
+- 重み・括弧内、LoRA／Embedding、ワイルドカード、`@artist`、エスケープ、引用文字列を保護します。`score_*`と既存の`Underscore exclusions`も変換しません。JSONや閉じていない構文は整形しません。特殊タグの途中だけを選択した場合も変更しません。
+- 編集フォーカスを維持し、ブラウザーのUndo／Redoが利用できます。一括整形のUndoは**入力欄ごと**です。IME変換中は整形せず、実行後の文字列は通常の入力イベントでノードへ反映します。入力中・Queue実行時の自動整形は行いません。
+
+操作構成は [Haoming02/comfyui-prompt-format](https://github.com/Haoming02/comfyui-prompt-format) を参考にし、整形処理はJP Assistの特殊タグ保護に合わせて実装しています。
+
+### Underscore exclusionsの使い方
+
+**Settings → Danbooru Tag JP Assist → Insert → Underscore exclusions** は、空白に変換したくないタグを指定する欄です。例えば `score_*, rating_*, my_custom_tag` とカンマ区切りで入力すると、該当するタグはアンダースコアを維持します。`*`は任意の文字列、`?`は任意の1文字に一致し、通常のタグ名は完全一致で指定できます。改行区切りにも対応しています。
+
+補完の`Use spaces for underscores`、整形の`Replace underscores`がONのときに適用します。どちらもOFFなら変換しません。追加の除外が不要なら空欄で構いません。Formatでは`score_*`と特殊構文を空欄でも保護します。
 
 ## ファイル構成
 
@@ -205,13 +247,23 @@ Danbooru Tag JP Assist adds tag suggestions to multiline text areas that belong 
 
 It is intended for users who want to search English Danbooru tags and English prompt vocabulary with optional Japanese aliases.
 
+## What's New — v0.3.0 (2026-10-23)
+
+- **Format in the top action bar**, also available through **Alt + Shift + F**. Format all recognized prompt inputs by default, or choose the current input/selection or selected nodes.
+- **Options in the existing Settings category**: duplicate plain tags, underscore conversion and newline commas, all off by default. See [Prompt Formatting](#prompt-formatting) for usage.
+- **Preserve special syntax, focus and per-input Undo/Redo**. No automatic formatting on typing or queue submission.
+- **Better completion behavior**: keep focus after clicking a candidate and default sorting to `Priority / count`. Saved preferences take precedence.
+- **UI fixes**: support delayed/replaced modern toolbars and remove orphaned or duplicate Settings tooltips.
+
+Existing workflow formats, node IDs and CSV precedence are preserved.
+
 ## Distribution
 
 Stable versions are available from [GitHub Releases](https://github.com/ukr8b3g-cmyk/Danbooru-Tag-JP-Assist/releases). Check GitHub Actions and Comfy Registry for publication and review status. Git clone installation is also supported.
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- Version: `0.2.0`
+- Version: `0.3.0`
 - Runs inside ComfyUI's Python environment. ComfyUI supplies `server` and `aiohttp`, so no additional pip dependencies are declared.
 - The distribution includes the Python implementation, `web/`, the five bundled tag CSVs and two translation CSVs listed below, README, LICENSE, and THIRD_PARTY_NOTICES. `.comfyignore` excludes runtime downloads, download metadata, temporary files, and user-added data. Prepare any publication from a clean checkout without user data.
 - MIT applies to the source code and does not replace third-party data terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -359,6 +411,16 @@ For example, with `Suggestion count = 20`, if the selected CSV has only 7 matche
 - `Preserve prompt formatting`: enabled by default. Keeps existing line breaks, blank lines, indentation, and surrounding spaces when inserting a suggestion. Disable it to use the legacy whitespace-normalizing behavior.
 
 Autocomplete searches are debounced by 80 ms, keyboard navigation no longer rebuilds the full suggestion list, and the Hugging Face CSV refresh check runs without blocking extension UI initialization.
+
+## Prompt Formatting
+
+Click **Format** in the top action bar to format all recognized prompt inputs by default, or press **Alt + Shift + F** in a node input. Choose `Current input / selection` and click an input (or select text) to limit the edit. You do not need to reopen Settings for each edit. **Settings → Danbooru Tag JP Assist → Formatting** contains the target selector, another Format action, and three independent options (all off by default): duplicate plain tags, underscore replacement, and newline commas. Changing an option does not edit text until Format is invoked. Even with all options off, `1girl,,  solo , smile` becomes `1girl, solo, smile`. Use **Ctrl + Z** in the input to undo.
+
+The default target is all recognized prompt inputs. Saved target preferences are preserved; select `All recognized prompt inputs` once if the previous default was saved. Batch modes target selected nodes or all recognized TextEncode/Prompt/String inputs, excluding notes, JSON and code nodes. Unknown custom nodes can use the current-input mode. Commas and spacing are normalized while paragraphs and indentation remain intact. Syntax groups, model references, wildcards, artist prefixes, escapes, quoted text, score tags and underscore exclusions are protected. Incomplete syntax, JSON and partial selections inside protected tokens are left unchanged.
+
+Focus and native browser Undo/Redo are preserved; batch edits are undone **per input**, not as one graph-wide action. Formatting is explicit, never on typing or queue submission, and is blocked during IME composition. The interaction design is inspired by [comfyui-prompt-format](https://github.com/Haoming02/comfyui-prompt-format).
+
+`Insert → Underscore exclusions` accepts comma- or newline-separated patterns, such as `score_*, rating_*, my_custom_tag`. `*` matches any sequence and `?` one character; plain names match whole tags. These exclusions apply when insertion's `Use spaces for underscores` or formatting's `Replace underscores` is enabled. Leave the field empty if no additional exclusions are needed. Format always protects score tags and special syntax.
 
 ## Notes
 

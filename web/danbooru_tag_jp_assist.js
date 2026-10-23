@@ -2,6 +2,7 @@ import { app } from "/scripts/app.js";
 import { inputContext, snapshotMatches, insertionEdit } from "./lib/completion_core.js";
 
 import { installFormatting } from "./lib/format_ui.js";
+import { positionPopup } from "./lib/caret_popup.js";
 import { installTooltipCleanup } from "./lib/tooltip_cleanup.js";
 
 const API_URLS = ["/danbooru-tag-jp-assist/tags", "/jp-tag-autocomplete-test/tags"];
@@ -553,12 +554,9 @@ function attachAutocomplete(textarea, node) {
       active = 0;
       if (activeAutocomplete && activeAutocomplete !== controller) activeAutocomplete.invalidate();
       activeAutocomplete = controller;
-      const rect = textarea.getBoundingClientRect();
-      popup.style.left = `${Math.max(8, Math.min(rect.left, window.innerWidth - 300))}px`;
-      popup.style.top = `${Math.max(8, Math.min(rect.bottom + 4, window.innerHeight - 250))}px`;
-      popup.style.width = `${Math.max(300, Math.min(rect.width, window.innerWidth - 16))}px`;
       popup.style.display = "block";
       render();
+      positionPopup(textarea, popup);
     } catch (error) {
       if (valid()) hide();
       if (error.name !== "AbortError") console.debug("JP Assist search unavailable", error.message);
@@ -579,6 +577,24 @@ function attachAutocomplete(textarea, node) {
   listen("focus", () => { invalidate(); if (!formattingActive) void update(requestSerial); });
   listen("blur", invalidate);
   listen("select", selectionChanged);
+  const reposition = () => {
+    if (!destroyed && items.length) {
+      popup.style.display = "block";
+      positionPopup(textarea, popup);
+    }
+  };
+  listen("scroll", reposition);
+  window.addEventListener("resize", reposition, {signal: listeners.signal});
+  window.addEventListener("wheel", ev => {
+    if (!popup.contains(ev.target)) requestAnimationFrame(reposition);
+  }, {passive: true, signal: listeners.signal});
+  window.addEventListener("pointermove", ev => {
+    if (ev.buttons && !popup.contains(ev.target)) requestAnimationFrame(reposition);
+  }, {signal: listeners.signal});
+  // Capture page/panel scrolling, but do not relayout when the candidate list scrolls.
+  document.addEventListener("scroll", ev => {
+    if (ev.target !== popup && !popup.contains(ev.target)) reposition();
+  }, {capture: true, signal: listeners.signal});
   listen("compositionstart", () => { composing = true; compositionKeyPending = true; invalidate(); });
   listen("compositionend", () => { composing = false; scheduleUpdate(); });
   listen("keyup", ev => {

@@ -61,7 +61,7 @@ async function fixture({delay=0,orderedSelection=true,savedSort,savedSettings={}
     if(fail)throw new Error('offline');
     return {ok:true,json:async()=>({tags:[item],revision})};
   };
-  const context=vm.createContext({app,core,document,Element,HTMLTextAreaElement:Textarea,AbortController,Event,InputEvent:Event,URLSearchParams,Map,Set,WeakMap,WeakSet,console,fetch,setTimeout,clearTimeout,window,requestAnimationFrame:fn=>setTimeout(fn,0),MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}}});
+  const context=vm.createContext({app,core,positionPopup:()=>{},document,Element,HTMLTextAreaElement:Textarea,AbortController,Event,InputEvent:Event,URLSearchParams,Map,Set,WeakMap,WeakSet,console,fetch,setTimeout,clearTimeout,window,requestAnimationFrame:fn=>setTimeout(fn,0),MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}}});
   let source=await readFile(new URL('../web/danbooru_tag_jp_assist.js',import.meta.url),'utf8');
   source=source.replace(/^import .*$/gm,'').replace('const API_URLS', 'const {inputContext,snapshotMatches,insertionEdit}=core;\nconst API_URLS');
   vm.runInContext(source,context);

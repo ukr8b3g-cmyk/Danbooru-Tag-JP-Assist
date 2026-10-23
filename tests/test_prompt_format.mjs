@@ -98,6 +98,11 @@ test('formatter blocks IME and stale inputs, honors scope, and registers Setting
     const {run}=installFormatting(app,{getControllers:()=>controllers,begin:()=>begun++,end:()=>ended++});
     assert.equal(definitions.size,5);
     assert.equal(definitions.get('DanbooruTagJPAssist.FormatScope').defaultValue,'all');
+    values.set('Comfy.Locale','ja');
+    const settingsButton=definitions.get('DanbooruTagJPAssist.FormatNow').type();
+    assert.match(settingsButton.title,/プロンプトのカンマ・空白/);
+    values.set('Comfy.Locale','fr');settingsButton.dispatchEvent(new Event('mouseenter'));
+    assert.match(settingsButton.title,/Clean up prompt commas and spacing/);
     for(const d of definitions.values())assert.equal(d.category[0],'Danbooru Tag JP Assist');
     for(const key of ['Duplicates','Underscores','AppendComma'])assert.equal(definitions.get('DanbooruTagJPAssist.Format'+key).defaultValue,false);
     handlers.get('focusin')({target:first});handlers.get('compositionstart')({target:first});
@@ -134,7 +139,15 @@ test('toolbar waits past hidden legacy menu and survives delayed/replaced modern
   globalThis.window={addEventListener(){}};
   try {
     let clicks=0;
-    const button=mountFormatButton({},()=>clicks++);
+    let locale='ja';
+    const button=mountFormatButton({ui:{settings:{getSettingValue:()=>locale}}},()=>clicks++);
+    const japanese='プロンプトのカンマ・空白を整えます。対象・追加処理は設定に従います。';
+    const english='Clean up prompt commas and spacing, using the configured target and options.';
+    assert.equal(button.title,japanese);
+    for(const lang of ['en','zh','fr','ko','']) {
+      locale=lang;button.dispatchEvent(new Event('mouseenter'));assert.equal(button.title,english);
+    }
+    locale='ja-JP';button.dispatchEvent(new Event('focus'));assert.equal(button.title,japanese);
     assert.equal(legacy.children.length,0);
     modern=new ButtonElement();root.appendChild(modern);mutation();frame();
     assert.equal(button.parentElement,modern);assert.equal(modern.children.length,1);

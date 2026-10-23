@@ -1,5 +1,20 @@
 import { formatPrompt, formatSelection, replacementEdit } from './prompt_format.js';
 
+function addFormatTooltip(button, app) {
+  const update = () => {
+    const locale = app.ui?.settings?.getSettingValue?.('Comfy.Locale')
+      ?? app.extensionManager?.setting?.get?.('Comfy.Locale')
+      ?? document.documentElement?.lang ?? 'en';
+    // Use the browser tooltip so no floating panel remains after leaving the button.
+    button.title = /^ja(?:-|$)/i.test(locale)
+      ? 'プロンプトのカンマ・空白を整えます。対象・追加処理は設定に従います。'
+      : 'Clean up prompt commas and spacing, using the configured target and options.';
+  };
+  update();
+  button.addEventListener('mouseenter', update);
+  button.addEventListener('focus', update);
+}
+
 export function isPromptController({node, textarea}) {
   const type = String(node?.comfyClass ?? node?.type ?? '');
   if (/json|script|codeeditor|codeinput|template|markdown|note/i.test(type)) return false;
@@ -77,7 +92,7 @@ export function installFormatting(app, {getControllers, begin, end}) {
   }
   // Also expose the action in Settings if the main menu is hidden.
   app.ui.settings.addSetting({id: prefix + 'Now', name: 'Format', category: ['Danbooru Tag JP Assist','Formatting','Format'],
-    type: () => {const button = document.createElement('button'); button.textContent = 'Format'; button.onclick = run; return button;}});
+    type: () => {const button = document.createElement('button'); button.textContent = 'Format'; addFormatTooltip(button, app); button.onclick = run; return button;}});
   document.addEventListener('keydown', e => {
     if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyF'
         && !e.isComposing && e.keyCode !== 229 && controllerFor(document.activeElement)) {
@@ -91,6 +106,7 @@ export function installFormatting(app, {getControllers, begin, end}) {
 export function mountFormatButton(app, run) {
   const button = document.createElement('button');
   button.id = 'jp-assist-format'; button.textContent = 'Format';
+  addFormatTooltip(button, app);
   button.setAttribute('aria-label', 'JP Assist Format');
   button.className = 'comfyui-button';
   button.style.cssText = 'padding:6px 10px;white-space:nowrap;flex-shrink:0';

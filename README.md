@@ -105,6 +105,12 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 
 ## プロンプト整形
 
+![JP AssistのFormatting設定画面](docs/images/formatting-settings.png)
+
+画像は**3つのオプションをすべてON、対象をAll recognized prompt inputs**にした使用例です。3つのスイッチの初期値はすべてOFFです。青がON、灰色がOFFで、切り替えただけでは整形されません。
+
+画像の設定では、Formatを押すと認識できるプロンプト欄をまとめて整え、`blue_hair`を`blue hair`に変換し、同じ行の通常タグの重複を取り除き、後続の文章がある行の末尾にカンマを補います。各項目の意味と対象範囲は下の表を参照してください。
+
 通常画面の**上部操作バーにある Format** ボタン、または入力欄で **Alt + Shift + F** を押すと整形します。設定は **Settings → Danbooru Tag JP Assist → Formatting** にまとめています。この中にもFormatボタンがあります。
 
 初期状態では、上部のFormatボタンを押すと、現在のワークフロー内の認識できるプロンプト欄をまとめて整形します。1つの欄だけを整える場合は、Settingsで対象を`Current input / selection`に変更し、入力欄をクリックしてからFormatを押してください。文字列の一部なら範囲選択して実行します。Settingsを毎回開く必要はありません。スイッチを切り替えただけでは文章は変わりません。
@@ -413,6 +419,18 @@ For example, with `Suggestion count = 20`, if the selected CSV has only 7 matche
 Autocomplete searches are debounced by 80 ms, keyboard navigation no longer rebuilds the full suggestion list, and the Hugging Face CSV refresh check runs without blocking extension UI initialization.
 
 ## Prompt Formatting
+
+![JP Assist Formatting settings](docs/images/formatting-settings.png)
+
+The screenshot shows an example with **all three options enabled** and **All recognized prompt inputs** selected. All three switches default to **off**. Blue means on and gray means off; changing a switch does not format text until you click Format.
+
+| Control | How to use it |
+| --- | --- |
+| Format | Apply formatting to the chosen target. The top action bar also has a Format button. |
+| Append comma on newline | Add a comma before a following line of text; do not append one to the final line. Protected control lines and punctuation are preserved. |
+| Replace underscores | Change `blue_hair` to `blue hair`, preserving special syntax and underscore exclusions. |
+| Remove duplicate plain tags | Change `smile, smile` to `smile` within the same line. Other lines and weighted tags are preserved. |
+| Format target | Choose the current input/selection, selected nodes, or all recognized prompt inputs in the current workflow (the default). |
 
 Click **Format** in the top action bar to format all recognized prompt inputs by default, or press **Alt + Shift + F** in a node input. Choose `Current input / selection` and click an input (or select text) to limit the edit. You do not need to reopen Settings for each edit. **Settings → Danbooru Tag JP Assist → Formatting** contains the target selector, another Format action, and three independent options (all off by default): duplicate plain tags, underscore replacement, and newline commas. Changing an option does not edit text until Format is invoked. Even with all options off, `1girl,,  solo , smile` becomes `1girl, solo, smile`. Use **Ctrl + Z** in the input to undo.
 

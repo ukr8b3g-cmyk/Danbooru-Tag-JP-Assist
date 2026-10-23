@@ -53,8 +53,8 @@ const DEFAULTS = {
   popupTheme: "cyan",
   tagFile: "All",
   translationFile: "All",
-  tagSelectionMode: "legacy",
-  translationSelectionMode: "legacy",
+  tagSelectionMode: "selected",
+  translationSelectionMode: "selected",
   tagFiles: [],
   translationFiles: [],
   autoUpdateHf: true,
@@ -103,8 +103,8 @@ function requestParams(query, tail = "") {
     search_jp: getSetting(SETTINGS.searchJapanese, true) ? "1" : "0", q: query, tail,
   });
   for (const kind of ["tag", "translation"]) {
-    if (getSetting(SETTINGS[`${kind}SelectionMode`], "legacy") === "selected") {
-      params.set(`${kind}_files`, JSON.stringify(orderedNames(getSetting(SETTINGS[`${kind}Files`], []))));
+    if (getSetting(SETTINGS[`${kind}SelectionMode`], DEFAULTS[`${kind}SelectionMode`]) === "selected") {
+      params.set(`${kind}_files`, JSON.stringify(orderedNames(getSetting(SETTINGS[`${kind}Files`], DEFAULTS[`${kind}Files`]))));
     }
   }
   return params;
@@ -167,15 +167,19 @@ function orderedNames(value) {
 function addFileSelection(kind, files) {
   const id = SETTINGS[`${kind}Files`];
   addSetting({
-    id, name: `Selected ${kind} CSVs (ordered)`, defaultValue: [],
+    id, name: `Selected ${kind} CSVs (ordered)`, defaultValue: files.ordered_selection ? DEFAULTS[`${kind}Files`] : undefined,
     category: ["Danbooru Tag JP Assist", "Files", `Selected ${kind} CSVs`],
     type: (_name, setter, value) => {
       const root = document.createElement("div");
       root.className = "jp-csv-selection";
       root.style.cssText = "min-width:280px;width:100%;max-width:480px";
-      let selected = orderedNames(value);
+      let selected = orderedNames(value ?? DEFAULTS[`${kind}Files`]);
       for (const existing of fileSelectionEditors) if (!existing.root.isConnected) fileSelectionEditors.delete(existing);
-      const editor = {root, refresh: updated => {files = updated; render();}};
+      const editor = {root, refresh: updated => {
+        files = updated;
+        if (getSetting(id, null) === null) selected = orderedNames(DEFAULTS[`${kind}Files`]);
+        render();
+      }};
       fileSelectionEditors.add(editor);
       const save = next => {selected = next; setter([...selected]); render();};
       function render() {
@@ -233,6 +237,8 @@ function addFileSelection(kind, files) {
 async function refreshFileSelections() {
   fileListCache = null;
   const files = await loadFileList();
+  DEFAULTS.tagFiles = orderedNames(files.tag_files);
+  DEFAULTS.translationFiles = orderedNames(files.translation_files);
   for (const editor of fileSelectionEditors) {
     if (editor.root.isConnected) editor.refresh(files);
     else fileSelectionEditors.delete(editor);
@@ -400,6 +406,8 @@ function attachAutocomplete(textarea, node) {
   if (!shouldAttach(textarea) || textareaControllers.has(textarea)) return;
   const popup = makePopup();
   const listeners = new AbortController();
+  // Keep scrollbar presses away from ComfyUI's outside-widget blur handler.
+  popup.addEventListener("mousedown", ev => ev.stopPropagation(), {signal: listeners.signal});
   const listen = (type, handler) => textarea.addEventListener(type, handler, {signal: listeners.signal});
   let items = [];
   let active = 0;
@@ -669,6 +677,8 @@ async function addSettings() {
   const files = await loadFileList();
   const tagFiles = Array.isArray(files.tag_files) && files.tag_files.length ? files.tag_files : ["All"];
   const translationFiles = Array.isArray(files.translation_files) && files.translation_files.length ? files.translation_files : ["All"];
+  DEFAULTS.tagFiles = orderedNames(tagFiles);
+  DEFAULTS.translationFiles = orderedNames(translationFiles);
   addSetting({
     id: SETTINGS.enabled,
     name: "Enable suggestions",
@@ -725,7 +735,7 @@ async function addSettings() {
       id: SETTINGS[`${kind}SelectionMode`], name: `${kind === "tag" ? "Tag" : "Translation"} selection mode`, type: "combo",
       category: ["Danbooru Tag JP Assist", "Files", `${kind} selection mode`],
       options: [{value: "legacy", text: kind === "tag" ? "All / single priority" : "All / single file"}, {value: "selected", text: "Selected CSVs only"}],
-      defaultValue: "legacy",
+      defaultValue: DEFAULTS[`${kind}SelectionMode`],
     });
   }
   addSetting({

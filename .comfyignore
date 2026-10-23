@@ -27,3 +27,6 @@ venv/
 /tags/translation_files/**
 !/tags/translation_files/merged_translations_dedup.csv
 !/tags/translation_files/natural_language_ja.csv
+
+!/tags/tag_files/moss_image_natural_language.csv
+!/tags/translation_files/moss_image_natural_language_ja.csv

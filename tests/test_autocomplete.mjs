@@ -28,7 +28,7 @@ const event = (name,props={})=>Object.assign(new Event(name,{cancelable:true}),p
 const wait = ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const item = {tag:'blue',meta:{source_type:'natural_language',insert_mode:'word',insert_text:'blue'}};
 
-async function fixture({delay=0,orderedSelection=true,savedSort}={}) {
+async function fixture({delay=0,orderedSelection=true,savedSort,savedSettings={},fileListFailsOnce=false}={}) {
   const window=Object.assign(new EventTarget(),{innerWidth:1000,innerHeight:800});
   const document = new Element();
   document.body=new Element();
@@ -40,7 +40,8 @@ async function fixture({delay=0,orderedSelection=true,savedSort}={}) {
     area.dispatchEvent(event('input',{inputType:'insertText'}));
     return true;
   };
-  const settings=new Map(savedSort === undefined ? [] : [["DanbooruTagJPAssist.SortOrder",savedSort]]);
+  const settings=new Map(Object.entries(savedSettings));
+  if(savedSort !== undefined) settings.set("DanbooruTagJPAssist.SortOrder",savedSort);
   const definitions=new Map();
   let extension;
   let observerCallback = null;
@@ -50,7 +51,10 @@ async function fixture({delay=0,orderedSelection=true,savedSort}={}) {
   const app={ui:{settings:{addSetting(def){definitions.set(def.id,def);if(typeof def.type!=='function' && !settings.has(def.id)) settings.set(def.id,def.defaultValue);},getSettingValue(id){return settings.get(id);}}},registerExtension(ext){extension=ext;}};
   const fetch=async (url,options)=>{
     calls.push({url,signal:options.signal});
-    if(url.includes('/files'))return {ok:true,json:async()=>({tag_files:['a.csv','b.csv','All'],translation_files:['ja.csv','nl.csv','All'],ordered_selection:orderedSelection})};
+    if(url.includes('/files')) {
+      if(fileListFailsOnce) {fileListFailsOnce=false;throw new Error('file list temporarily unavailable');}
+      return {ok:true,json:async()=>({tag_files:['a.csv','b.csv','All'],translation_files:['ja.csv','nl.csv','All'],ordered_selection:orderedSelection})};
+    }
     if(url.includes('/revision'))return {ok:true,json:async()=>({revision,ordered_selection:orderedSelection})};
     if(url.includes('/hf-update'))return {ok:true,json:async()=>({updated:false})};
     if(delay)await wait(delay); // Deliberately ignore AbortSignal to model an already queued response.
@@ -141,7 +145,7 @@ test('new typing after dismissal does not reuse the previous selection snapshot'
 });
 
 test('legacy mode omits selected lists; selected tag and translation modes send independent ordered arrays',async()=>{
-  const f=await fixture();f.type('blu');await wait(110);
+  const f=await fixture({savedSettings:{'DanbooruTagJPAssist.TagSelectionMode':'legacy','DanbooruTagJPAssist.TranslationSelectionMode':'legacy'}});f.type('blu');await wait(110);
   let params=new URL(f.calls.filter(c=>c.url.includes('/tags?')).at(-1).url,'http://local').searchParams;
   assert.equal(params.has('tag_files'),false);assert.equal(params.has('translation_files'),false);
   f.setting('TagFiles',['b.csv','a.csv']);f.setting('TagSelectionMode','selected');
@@ -155,7 +159,7 @@ test('legacy mode omits selected lists; selected tag and translation modes send 
 
 const descendants=root=>[root,...root.children.flatMap(descendants)];
 test('Settings checkboxes persist selection order and arrows reorder without including All',async()=>{
-  const f=await fixture();const root=f.mountFiles('Tag');
+  const f=await fixture({savedSettings:{'DanbooruTagJPAssist.TagFiles':[]}});const root=f.mountFiles('Tag');
   const find=label=>descendants(root).find(el=>el.attributes['aria-label']===label);
   const choose=name=>{const check=find(`Select tag CSV ${name}`);check.checked=true;check.dispatchEvent(event('change'));};
   choose('b.csv');choose('a.csv');
@@ -224,7 +228,93 @@ function mouseDownThroughDocument(target, document) {
     Object.defineProperty(bubbled,'target',{value:target});
     document.dispatchEvent(bubbled);
   }
+  return e;
 }
+
+test('scrollbar mousedown keeps the popup open without cancelling native scrolling',async()=>{
+  const f=await fixture();f.setting('CompletionBehavior','csv');
+  let outsideWidgetClicks=0;
+  f.document.addEventListener('mousedown',e=>{
+    if(!f.area.contains(e.target)) {
+      outsideWidgetClicks++;
+      f.document.activeElement=f.document.body;
+      f.area.dispatchEvent(event('blur'));
+    }
+  });
+  f.type('blu');await wait(110);
+  const popup=f.popup();assert.ok(popup);
+  // Native scrollbar presses target the scroll container itself.
+  const down=mouseDownThroughDocument(popup,f.document);
+  assert.equal(down.defaultPrevented,false);
+  assert.equal(outsideWidgetClicks,0);
+  assert.equal(f.document.activeElement,f.area);
+  assert.equal(f.popup(),popup);
+  assert.equal(f.area.value,'blu');
+  assert.equal(f.area.selectionStart,3);
+  f.window.dispatchEvent(event('pointerup'));
+  assert.equal(f.popup(),popup);
+  const candidate=descendants(popup).find(el=>el.style.cssText?.includes('cursor:pointer'));
+  mouseDownThroughDocument(candidate,f.document);
+  assert.equal(f.area.value,'blue ');
+  assert.equal(f.area.selectionStart,5);
+  f.type('blu');await wait(110);
+  mouseDownThroughDocument(f.document.body,f.document);
+  assert.equal(outsideWidgetClicks,1);
+  assert.equal(f.popup(),undefined);
+  assert.equal(f.area.value,'blu');
+  f.node.onRemoved();
+});
+
+test('real focus loss still dismisses a popup after scrollbar interaction',async()=>{
+  const f=await fixture();f.type('blu');await wait(110);
+  mouseDownThroughDocument(f.popup(),f.document);
+  assert.ok(f.popup());
+  f.document.activeElement=f.document.body;
+  f.area.dispatchEvent(event('blur',{relatedTarget:f.document.body}));
+  assert.equal(f.popup(),undefined);
+  assert.equal(f.area.value,'blu');
+  f.node.onRemoved();
+});
+
+test('both CSV selectors default to selected mode with available files checked',async()=>{
+  const f=await fixture();
+  for(const kind of ['Tag','Translation']) {
+    assert.equal(f.definitions.get(`DanbooruTagJPAssist.${kind}SelectionMode`).defaultValue,'selected');
+    const root=f.mountFiles(kind);
+    const checks=descendants(root).filter(el=>el.attributes['aria-label']?.startsWith(`Select ${kind.toLowerCase()} CSV `));
+    assert.equal(checks.length,2);
+    assert.ok(checks.every(el=>el.checked));
+  }
+  f.type('blu');await wait(110);
+  const params=new URL(f.calls.filter(c=>c.url.includes('/tags?')).at(-1).url,'http://local').searchParams;
+  assert.deepEqual(JSON.parse(params.get('tag_files')),['a.csv','b.csv']);
+  assert.deepEqual(JSON.parse(params.get('translation_files')),['ja.csv','nl.csv']);
+  f.node.onRemoved();
+});
+
+test('saved selections including empty lists override the new defaults',async()=>{
+  const f=await fixture({savedSettings:{'DanbooruTagJPAssist.TagFiles':['b.csv'],'DanbooruTagJPAssist.TranslationFiles':[]}});
+  f.type('blu');await wait(110);
+  const params=new URL(f.calls.filter(c=>c.url.includes('/tags?')).at(-1).url,'http://local').searchParams;
+  assert.deepEqual(JSON.parse(params.get('tag_files')),['b.csv']);
+  assert.deepEqual(JSON.parse(params.get('translation_files')),[]);
+  assert.ok(descendants(f.mountFiles('Translation')).filter(el=>el.attributes['aria-label']?.startsWith('Select translation CSV ')).every(el=>!el.checked));
+  f.node.onRemoved();
+});
+
+test('dictionary reload recovers unsaved defaults after an initial file-list failure',async()=>{
+  const f=await fixture({fileListFailsOnce:true,savedSettings:{'DanbooruTagJPAssist.TranslationFiles':[]}});
+  const root=f.mountFiles('Tag');
+  const button=f.definitions.get('DanbooruTagJPAssist.ReloadDictionaries').type();
+  await button.onclick();
+  const checks=descendants(root).filter(el=>el.attributes['aria-label']?.startsWith('Select tag CSV '));
+  assert.equal(checks.length,2);assert.ok(checks.every(el=>el.checked));
+  f.type('blu');await wait(110);
+  const params=new URL(f.calls.filter(c=>c.url.includes('/tags?')).at(-1).url,'http://local').searchParams;
+  assert.deepEqual(JSON.parse(params.get('tag_files')),['a.csv','b.csv']);
+  assert.deepEqual(JSON.parse(params.get('translation_files')),[]);
+  f.node.onRemoved();
+});
 
 test('candidate selection keeps focus through ComfyUI outside-widget dismissal',async()=>{
   const f=await fixture();f.setting('CompletionBehavior','csv');

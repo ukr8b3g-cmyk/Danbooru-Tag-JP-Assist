@@ -6,6 +6,14 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 [English README](#english-readme)
 
+## What's New — v0.4.0（2026-10-24）
+
+- 自然言語辞書を整理し、MOSS向けの英語語句CSV `moss_image_natural_language.csv` と対応する日本語検索用CSV `moss_image_natural_language_ja.csv` を追加しました。
+- **使い方**：Settings → Danbooru Tag JP Assistで、タグと翻訳の各チェックリストから上記CSVを選びます。追加ファイルは保存済みの選択に自動追加されません。`CSV-aware`では通常のMOSS語句はphraseとしてカンマ設定に従い、raw指定のテンプレートはそのまま挿入します。
+- 新規設定のCSV選択モードはタグ・翻訳とも `Selected CSVs only`。未保存のチェックリストは利用可能なCSVで初期化し、保存済みのモード・選択・空選択を維持します。
+- 候補のスクロールバーを左クリックしても候補が閉じないよう修正。実際に入力欄からフォーカスが外れた場合は閉じます。
+- Formatのマウスオーバー説明は日本語UIで日本語、それ以外は英語。設定画面の画像と各項目の説明も掲載しました。
+
 ## What's New — v0.3.0（2026-10-23）
 
 - **上部操作バーにFormatを追加**：ボタンを押すだけでプロンプトの余分なカンマ・空白を整えます。入力欄では **Alt + Shift + F** でも実行できます。
@@ -23,9 +31,9 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- バージョン: `0.3.0`
+- バージョン: `0.4.0`
 - ComfyUI の Python 環境で動作します。`server` と `aiohttp` は ComfyUI 側の環境を使用するため、追加の pip 依存は宣言していません。
-- 配布には本体 Python、`web/`、下記の同梱タグ5件・翻訳2件のCSV、README、LICENSE、THIRD_PARTY_NOTICES を含めます。`.comfyignore` は実行時ダウンロード、取得メタデータ、一時ファイル、利用者が追加したデータを除外します。公開準備は利用者データのないクリーンな checkout で行ってください。
+- 配布には本体 Python、`web/`、下記の同梱タグ6件・翻訳3件のCSV、README、LICENSE、THIRD_PARTY_NOTICES を含めます。`.comfyignore` は実行時ダウンロード、取得メタデータ、一時ファイル、利用者が追加したデータを除外します。公開準備は利用者データのないクリーンな checkout で行ってください。
 - MIT はソースコードに適用され、第三者データの利用条件を置き換えません。[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
 
 ## インストール
@@ -87,11 +95,13 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 
 1. ComfyUI の Settings を開きます。
 2. `Danbooru Tag JP Assist` を有効にします。
-3. まずは `Tag file (priority): All`、`Translation file: All` のまま使います。
+3. タグ・翻訳の `Selection mode` は初期値の `Selected CSVs only` を使い、それぞれのチェックリストで使うCSVを選びます。
 4. ノードの複数行プロンプト欄に英語または日本語を入力します。
 5. 候補をキーボードまたはマウスで選択します。
 
-初期設定では以下の動作になります。
+初期設定ではタグ・翻訳とも `Selected CSVs only` になり、未保存のチェックリストは利用可能なCSVを選択した状態で始まります。保存済みのモードと選択内容は維持します。後から追加したCSVはチェックリストで選択してください。
+
+従来の `All / single priority` / `All / single file` モードでは以下の動作になります。
 
 - `Tag file (priority): All` は `tags/tag_files/` 内の同梱CSVと、ローカルにある Danbooru CSV をまとめて検索します。
 - 個別の `Tag file (priority)` を選ぶと、そのファイルの一致候補が先に並び、候補上限に余りがある場合は `Tag source` で有効な他ファイルから補完します。
@@ -153,10 +163,12 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 - `tags/tag_files/anima_characters.csv`
 - `tags/tag_files/danbooru_2025.csv`
 - `tags/tag_files/e621.csv`
+- `tags/tag_files/moss_image_natural_language.csv`: MOSS向け自然言語語句 / natural-language phrases
 - `tags/tag_files/natural_language_tags.csv`: 軽量な英語辞書・プロンプト語彙
 
 同梱翻訳ファイル:
 
+- `tags/translation_files/moss_image_natural_language_ja.csv`: MOSS語句の日本語訳 / Japanese translations
 - `tags/translation_files/natural_language_ja.csv`: 自然言語辞書の一部に対応した日本語別名
 - `tags/translation_files/merged_translations_dedup.csv`: Danbooruタグ用の日本語別名
 
@@ -208,7 +220,7 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 
 ## 主な設定
 
-タグ・翻訳の各 `Selection mode` で `Selected CSVs only` を選ぶと、チェックしたCSVだけを選択順に使用します。↑ / ↓ で優先順位を変更できます。空の選択は候補・翻訳なしです。旧 `Tag source` / `Tag file (priority)` / `Translation file` は表示を維持しますが、選択モードでは対応する旧設定を使用しません。
+タグ・翻訳の各 `Selection mode` の初期値は `Selected CSVs only` です。チェックしたCSVだけを選択順に使用します。↑ / ↓ で優先順位を変更できます。空の選択は候補・翻訳なしです。旧 `Tag source` / `Tag file (priority)` / `Translation file` は表示を維持しますが、選択モードでは対応する旧設定を使用しません。
 
 - `Tag file (priority)`: `tags/tag_files/` 内の1ファイル、または `All`。初期値は `All` です。個別ファイルを選ぶと、そのファイルの一致候補を優先し、候補が足りない場合は `Tag source` で有効な他ファイルから補完します。
 - `Translation file`: `tags/translation_files/` 内の1ファイル、または `All`。
@@ -253,6 +265,14 @@ Danbooru Tag JP Assist adds tag suggestions to multiline text areas that belong 
 
 It is intended for users who want to search English Danbooru tags and English prompt vocabulary with optional Japanese aliases.
 
+## What's New — v0.4.0 (2026-10-24)
+
+- Reorganize natural-language vocabulary and add `moss_image_natural_language.csv` with matching Japanese search translations in `moss_image_natural_language_ja.csv`.
+- Select these files independently in the tag and translation checklists under Settings → Danbooru Tag JP Assist. New files are not added to saved selections automatically. In CSV-aware mode, Ordinary MOSS phrases follow the comma preference; raw templates are inserted unchanged.
+- New tag and translation selection modes default to `Selected CSVs only`; unsaved lists start with available CSVs. Saved modes, order, and empty selections are preserved.
+- Keep suggestions open while dragging their scrollbar, while dismissing them on genuine input focus loss.
+- Format hover help follows the ComfyUI language: Japanese for Japanese UI, English otherwise. The README includes a Settings screenshot and usage explanations.
+
 ## What's New — v0.3.0 (2026-10-23)
 
 - **Format in the top action bar**, also available through **Alt + Shift + F**. Format all recognized prompt inputs by default, or choose the current input/selection or selected nodes.
@@ -269,9 +289,9 @@ Stable versions are available from [GitHub Releases](https://github.com/ukr8b3g-
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- Version: `0.3.0`
+- Version: `0.4.0`
 - Runs inside ComfyUI's Python environment. ComfyUI supplies `server` and `aiohttp`, so no additional pip dependencies are declared.
-- The distribution includes the Python implementation, `web/`, the five bundled tag CSVs and two translation CSVs listed below, README, LICENSE, and THIRD_PARTY_NOTICES. `.comfyignore` excludes runtime downloads, download metadata, temporary files, and user-added data. Prepare any publication from a clean checkout without user data.
+- The distribution includes the Python implementation, `web/`, the six bundled tag CSVs and three translation CSVs listed below, README, LICENSE, and THIRD_PARTY_NOTICES. `.comfyignore` excludes runtime downloads, download metadata, temporary files, and user-added data. Prepare any publication from a clean checkout without user data.
 - MIT applies to the source code and does not replace third-party data terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
 ## Installation
@@ -323,11 +343,13 @@ If Hugging Face is offline or the source file disappears, the node keeps using t
 
 1. Open ComfyUI Settings.
 2. Enable `Danbooru Tag JP Assist`.
-3. Use the default `Tag file (priority): All` and `Translation file: All` first.
+3. Keep both selection modes at the default `Selected CSVs only` and choose files in the tag and translation checklists.
 4. Type English or Japanese text in a multiline prompt box on a node.
 5. Select a suggestion with the keyboard or mouse.
 
-Default behavior:
+Both selection modes default to `Selected CSVs only`. Unsaved checklists start with the available CSVs selected. Saved modes and selections are preserved. Select newly added CSVs in the checklists.
+
+Behavior in the legacy `All / single priority` / `All / single file` modes:
 
 - `Tag file (priority): All` searches bundled CSV files under `tags/tag_files/` plus the local Danbooru CSV when available.
 - Selecting a specific `Tag file (priority)` puts matches from that file first, then fills unused result slots from other files enabled by `Tag source`.
@@ -352,10 +374,12 @@ Currently bundled tag files:
 - `tags/tag_files/anima_characters.csv`
 - `tags/tag_files/danbooru_2025.csv`
 - `tags/tag_files/e621.csv`
+- `tags/tag_files/moss_image_natural_language.csv`: MOSS向け自然言語語句 / natural-language phrases
 - `tags/tag_files/natural_language_tags.csv`: lightweight English dictionary and prompt vocabulary
 
 Bundled translation files:
 
+- `tags/translation_files/moss_image_natural_language_ja.csv`: MOSS語句の日本語訳 / Japanese translations
 - `tags/translation_files/natural_language_ja.csv`: Japanese aliases for part of the natural language dictionary.
 - `tags/translation_files/merged_translations_dedup.csv`: Japanese aliases for Danbooru tags.
 
@@ -402,7 +426,7 @@ For example, with `Suggestion count = 20`, if the selected CSV has only 7 matche
 
 ## Settings
 
-- `Tag selection mode` and `Translation selection mode`: independently choose the existing `All / single priority` (`All / single file` for translations) or `Selected CSVs only`. The default preserves existing settings.
+- `Tag selection mode` and `Translation selection mode`: both default to `Selected CSVs only`. Saved modes are preserved. The legacy `All / single priority` (`All / single file` for translations) modes remain available.
 - `Selected tag CSVs (ordered)` and `Selected translation CSVs (ordered)`: check files in priority order, then use ↑ / ↓ to reorder. In selected mode only checked files are read. The first selected tag CSV wins duplicate rows and its matches precede later files before `Sort mode`; the first selected translation CSV wins duplicate translations. Empty tag selection gives no suggestions; empty translation selection gives no translations. Missing selections remain visible as unavailable and never fall back to All.
 - In selected mode the tag checklist controls search instead of `Tag source` and `Tag file (priority)`, and the translation checklist controls search instead of `Translation file`. The legacy controls remain visible but are not used in the corresponding selected mode. Switching back restores those existing choices. Settings are global and do not add workflow fields. Restart ComfyUI and reload the browser after updating to enable the new backend behavior.
 - `Tag file (priority)`: one file in `tags/tag_files/` or `All`. The default is `All`. Selecting a file prioritizes matches from that file, then fills remaining suggestions from other files enabled by `Tag source`.

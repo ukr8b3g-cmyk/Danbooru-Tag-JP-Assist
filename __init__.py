@@ -404,7 +404,7 @@ def _search_tag_rows(query, source="both", tag_file="all", translation_file="all
     tail = _normalize(tail)
     query = _normalize(query)
     if not query:
-        return []
+        return ([], ()) if _with_errors else []
 
     try:
         limit = max(1, min(500, int(limit)))

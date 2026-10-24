@@ -47,6 +47,23 @@ class Dictionaries(unittest.TestCase):
         self.assertEqual(rows[1]['meta']['insert_mode'], 'tag')
         self.assertEqual(rows[1]['meta']['post_count'], 0)
 
+    def test_empty_normalized_search_keeps_result_contract(self):
+        for query in ['', ' ', '\u3000', '_', '__', '___', ' _ ']:
+            with self.subTest(query=query):
+                self.assertEqual(backend._search_tag_rows(query), [])
+                self.assertEqual(backend._search_tag_rows(query, _with_errors=True), ([], ()))
+
+    def test_normalized_empty_api_search_differs_from_full_list_request(self):
+        self.tags('fixture.csv', 'tag,count\nblue,1\n')
+        for handler in [backend.get_danbooru_tag_jp_assist_tags, backend.get_legacy_jp_tag_autocomplete_tags]:
+            for query in ['', ' ', '\u3000', '_', '__', '___', ' _ ']:
+                with self.subTest(handler=handler.__name__, query=query):
+                    response = asyncio.run(handler(types.SimpleNamespace(query={'q': query})))
+                    self.assertEqual(response.status, 200)
+                    payload = json.loads(response.body)
+                    self.assertEqual([row['tag'] for row in payload['tags']], ['blue'] if query == '' else [])
+                    self.assertEqual(payload['errors'], [])
+
     def test_raw_csv_cell_is_not_trimmed(self):
         rows = backend._read_tag_csv(self.tags('x.csv', 'tag,insert_mode,source_type\n"  A_B,\nC  ",raw,custom\n'))
         self.assertEqual(rows[0]['meta']['insert_text'], '  A_B,\nC  ')

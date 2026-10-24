@@ -6,6 +6,15 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 [English README](#english-readme)
 
+## What’s New — v0.4.2（2026-10-24）
+
+- **自然言語補完で句読点を保持**：CSV-awareのword候補を確定しても、直後の句読点・閉じ括弧を削除しません。語中の置換、日本語別名、UTF-16位置、内部のハイフン・アポストロフィー、記号を含む候補にも対応します。既存のtag／raw／phrase挿入規則は維持します。
+- **自身のノードも一括Formatの対象**：`DanbooruTagJPAssist`の`text`欄を全対象・選択ノードの整形に含めます。Note／JSON／readonly／disabledとIME中の除外は維持します。
+- **空になる検索を安全に処理**：`_`・`__`・空白などは空候補を返し、API例外を防ぎます。空文字による全件取得は維持します。
+- **公開前チェックの整合**：必須のRegistry設定CIをmainの全pushで実行し、製品だけの修正でも正式公開前の検証を満たせるようにします。検証を免除する変更はありません。
+
+辞書・保存済み設定・ワークフローは変更しません。[検証と制約](docs/RELEASE_v0.4.2.md)
+
 ## What’s New — v0.4.1（2026-10-24）
 
 - **候補を入力中の文字・カーソルのすぐ下に表示**するよう変更しました。プロンプト欄の下端まで視線を移す必要がなくなります。
@@ -38,7 +47,7 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- バージョン: `0.4.1`
+- バージョン: `0.4.2`
 - ComfyUI の Python 環境で動作します。`server` と `aiohttp` は ComfyUI 側の環境を使用するため、追加の pip 依存は宣言していません。
 - 配布には本体 Python、`web/`、下記の同梱タグ6件・翻訳3件のCSV、README、LICENSE、THIRD_PARTY_NOTICES を含めます。`.comfyignore` は実行時ダウンロード、取得メタデータ、一時ファイル、利用者が追加したデータを除外します。公開準備は利用者データのないクリーンな checkout で行ってください。
 - MIT はソースコードに適用され、第三者データの利用条件を置き換えません。[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
@@ -272,6 +281,15 @@ Danbooru Tag JP Assist adds tag suggestions to multiline text areas that belong 
 
 It is intended for users who want to search English Danbooru tags and English prompt vocabulary with optional Japanese aliases.
 
+## What’s New — v0.4.2 (2026-10-24)
+
+- Preserve punctuation, closing delimiters and adjacent Unicode symbols when completing CSV-aware words; retain legacy tag/raw/phrase behavior.
+- Include this extension's public text node in all/selected Format targets while preserving exclusions and IME guards.
+- Return empty suggestions for underscore/whitespace-only searches without changing empty-query full-list requests.
+- Run required Registry configuration checks on every main push so product-only releases can satisfy the existing source-CI gate.
+
+Dictionaries, saved settings and workflows remain unchanged. See [release notes](docs/RELEASE_v0.4.2.md) for validation and limits.
+
 ## What’s New — v0.4.1 (2026-10-24)
 
 - Show autocomplete suggestions directly below the current text caret instead of the bottom of the prompt box.
@@ -303,7 +321,7 @@ Stable versions are available from [GitHub Releases](https://github.com/ukr8b3g-
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- Version: `0.4.1`
+- Version: `0.4.2`
 - Runs inside ComfyUI's Python environment. ComfyUI supplies `server` and `aiohttp`, so no additional pip dependencies are declared.
 - The distribution includes the Python implementation, `web/`, the six bundled tag CSVs and three translation CSVs listed below, README, LICENSE, and THIRD_PARTY_NOTICES. `.comfyignore` excludes runtime downloads, download metadata, temporary files, and user-added data. Prepare any publication from a clean checkout without user data.
 - MIT applies to the source code and does not replace third-party data terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

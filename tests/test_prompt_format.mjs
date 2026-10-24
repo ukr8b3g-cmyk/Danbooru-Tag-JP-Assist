@@ -1,5 +1,6 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
+import {readFileSync} from 'node:fs';
 import {formatPrompt, formatSelection, replacementEdit} from '../web/lib/prompt_format.js';
 import {applyFormat, isPromptController, installFormatting, mountFormatButton} from '../web/lib/format_ui.js';
 
@@ -129,6 +130,32 @@ class ButtonElement extends EventTarget {
   }
   after(el){this.parentElement.appendChild(el);el.previousElementSibling=this;}
 }
+
+test('own public text node participates in all and selected formatting with exclusions intact', () => {
+  const publicId = readFileSync(new URL('../__init__.py', import.meta.url), 'utf8')
+    .match(/["']([^"']+)["']\s*:\s*DanbooruTagJPAssist\s*[,}]/)[1];
+  const handlers = new Map(), values = new Map();
+  const area = () => ({value:'blue,,  sky',isConnected:true,selectionStart:11,selectionEnd:11,
+    focus(){document.activeElement=this;},setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;},dispatchEvent(){}});
+  const first=area(), second=area(), note=area(), json=area();
+  const controllers=[first,second,note,json].map((textarea,i)=>({textarea,
+    node:{comfyClass:i<2?publicId:i===2?'Note':'JSON',widgets:[{name:'text',inputEl:textarea}]}}));
+  const doc={activeElement:first,body:{},querySelector(){return null;},createElement(){return new ButtonElement();},
+    addEventListener(name,fn){handlers.set(name,fn);},execCommand(_cmd,_ui,text){const a=this.activeElement;a.value=a.value.slice(0,a.selectionStart)+text+a.value.slice(a.selectionEnd);return true;}};
+  globalThis.document=doc;globalThis.MutationObserver=class{observe(){}};globalThis.window={addEventListener(){}};
+  const app={canvas:{selected_nodes:{one:controllers[0].node}},ui:{settings:{addSetting(){},getSettingValue:id=>values.get(id)}}};
+  try {
+    const {run}=installFormatting(app,{getControllers:()=>controllers,begin(){},end(){}});
+    assert.equal(run(),2);assert.equal(first.value,'blue, sky');assert.equal(second.value,'blue, sky');
+    first.value=second.value='blue,,  sky';values.set('DanbooruTagJPAssist.FormatScope','selected');
+    assert.equal(run(),1);assert.equal(first.value,'blue, sky');assert.equal(second.value,'blue,,  sky');
+    first.value='blue,,  sky';first.readOnly=true;assert.equal(run(),0);first.readOnly=false;
+    first.disabled=true;assert.equal(run(),0);first.disabled=false;
+    handlers.get('compositionstart')({target:first});assert.equal(run(),0);handlers.get('compositionend')({target:first});
+    assert.equal(run(),1);assert.equal(note.value,'blue,,  sky');assert.equal(json.value,'blue,,  sky');
+    assert.equal(isPromptController({node:{type:publicId,widgets:[{name:'code',inputEl:first}]},textarea:first}),false);
+  } finally {for(const key of ['document','MutationObserver','window'])delete globalThis[key];}
+});
 test('toolbar waits past hidden legacy menu and survives delayed/replaced modern toolbar',()=>{
   const legacy=new ButtonElement(false);
   let modern=null, mutation, frame;

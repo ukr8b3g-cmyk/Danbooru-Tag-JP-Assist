@@ -42,16 +42,32 @@ function replaceUnderscores(text, patterns, protectWildcards) {
   }).join("");
 }
 
-function naturalRange(context, selected) {
+function naturalRange(context, selected, wordMode = false) {
   const segment = context.value.slice(context.replaceStart, context.end);
+  // Unicode letters/marks/numbers form words; internal hyphens and apostrophes
+  // stay inside them. Punctuation and emoji remain outside the replacement.
+  const wordPattern = /[\p{L}\p{M}\p{N}_]+(?:['’\-\u2010\u2011][\p{L}\p{M}\p{N}_]+)*/gu;
+  let start = context.wordStart, end = context.wordEnd;
+  if (wordMode) {
+    const position = context.end - context.replaceStart;
+    const current = [...context.value.slice(context.replaceStart, context.segmentEnd).matchAll(wordPattern)]
+      .find(word => word.index < position && position <= word.index + word[0].length);
+    start = current ? context.replaceStart + current.index : context.end;
+    end = current ? context.replaceStart + current.index + current[0].length : context.end;
+  }
   const words = [...segment.matchAll(/\S+/gu)];
+  if (wordMode) {
+    // A literal symbol may belong to the selected candidate itself.
+    words.push(...segment.matchAll(wordPattern));
+    words.sort((a, b) => a.index - b.index);
+  }
   for (const word of words) {
     const suffix = normalizeSearch(segment.slice(word.index));
     if (suffix && normalizeSearch(selected).startsWith(suffix)) {
-      return {start: context.replaceStart + word.index, end: context.wordEnd};
+      return {start: context.replaceStart + word.index, end};
     }
   }
-  return {start: context.wordStart, end: context.wordEnd};
+  return {start, end};
 }
 
 export function insertionEdit(context, item, options = {}) {
@@ -66,7 +82,7 @@ export function insertionEdit(context, item, options = {}) {
   let end = context.replaceEnd;
   if (csv) {
     if (meta.source_type === "natural_language" || mode === "word") {
-      ({start, end} = naturalRange(context, item.tag));
+      ({start, end} = naturalRange(context, item.tag, mode === "word"));
     } else {
       end = Math.max(end, context.segmentEnd);
     }
@@ -80,7 +96,7 @@ export function insertionEdit(context, item, options = {}) {
     const before = value.slice(0, start);
     replacement = (before && !/[,\n]\s*$/.test(before) ? ", " : "") + inserted + (options.autoComma ? ", " : " ");
   } else if (mode === "word") {
-    if (!after || !/^[\s,.;:!?\)\]\}]/u.test(after)) replacement += " ";
+    if (!after || !/^[\s\p{P}\p{S}]/u.test(after)) replacement += " ";
   } else if (mode !== "raw" && options.autoComma && !/^[ \t]*,/.test(after)) {
     replacement += !after || !/^[\r\n \t]/.test(after) ? ", " : ",";
   }

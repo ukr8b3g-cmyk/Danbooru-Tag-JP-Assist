@@ -19,6 +19,7 @@ export function isPromptController({node, textarea}) {
   const type = String(node?.comfyClass ?? node?.type ?? '');
   if (/json|script|codeeditor|codeinput|template|markdown|note/i.test(type)) return false;
   const widget = node?.widgets?.find(w => w.inputEl === textarea || w.element === textarea || w.element?.contains?.(textarea));
+  if (type === 'DanbooruTagJPAssist') return widget?.name === 'text';
   return /CLIPTextEncode|TextEncode|Prompt|String|TextInput|Primitive/i.test(type)
     && /^(?:text|text_[gl]|string|value|prompt|positive|negative|positive_prompt|negative_prompt)$/i.test(widget?.name ?? '');
 }

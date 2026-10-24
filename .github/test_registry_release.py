@@ -36,6 +36,35 @@ class Response(io.BytesIO):
 
 
 class APIAndReleaseTests(unittest.TestCase):
+    def test_product_only_main_push_can_supply_all_required_source_checks(self):
+        root = Path(__file__).resolve().parents[1]
+        policy = json.loads((root / '.github/registry-policy.json').read_text('utf-8'))
+        metadata = (root / 'pyproject.toml').read_bytes()
+        tag = 'v' + release.tomllib.loads(metadata.decode())['project']['version']
+        for workflow_name in ['product_tests.yml', 'registry_validation.yml']:
+            text = (root / '.github/workflows' / workflow_name).read_text('utf-8')
+            lines = text.splitlines()
+            start = lines.index('  push:')
+            push = []
+            for line in lines[start + 1:]:
+                if line.strip() and not line.startswith('    '):
+                    break
+                push.append(line)
+            self.assertIn('    branches: [main]', push)
+            # Product-only edits such as completion_core.js or pyproject.toml
+            # must generate every source check required by the release policy.
+            self.assertFalse(any(line.strip().startswith(('paths:', 'paths-ignore:')) for line in push))
+            self.assertIn(lines[0].removeprefix('name: '), policy['required_workflows'])
+        sha = 'b' * 40
+        repo = policy['repository'].removeprefix('https://github.com/')
+        runs = [{'name': name, 'head_sha': sha, 'head_repository': {'full_name': repo},
+                 'event': 'push', 'status': 'completed', 'conclusion': 'success'} for name in policy['required_workflows']]
+        responses = [{'tag_name': tag, 'draft': False, 'prerelease': False},
+                     {'object': {'type': 'commit', 'sha': sha}},
+                     {'encoding': 'base64', 'content': base64.b64encode(metadata).decode()}, {'workflow_runs': runs}]
+        with patch.dict(os.environ, {'GITHUB_REPOSITORY': repo}), patch.object(release, 'get_json', side_effect=responses):
+            self.assertEqual(release.resolve_release(policy, tag)['sha'], sha)
+
     def test_valid_json(self):
         with patch.object(release.urllib.request, "urlopen", return_value=Response(b'{"id":"ok"}')):
             self.assertEqual(release.get_json("https://api.comfy.org/test"), {"id": "ok"})

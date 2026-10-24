@@ -21,3 +21,39 @@ test('legacy mode ignores CSV insertion modes', () => assert.equal(edit('blu', n
 test('legacy non-format-preserving path is maintained', () => assert.equal(edit('foo\n  blu  next',{tag:'blue_hair'},{...options,behavior:'existing',preserveFormatting:false},10).value,'foo\nblue hair, next'));
 test('zero and nonzero selection changes invalidate snapshots', () => {const c=inputContext('blu',3); assert.ok(snapshotMatches(c,'blu',3,3));assert.ok(!snapshotMatches(c,'blu',1,1));assert.ok(!snapshotMatches(c,'blx',3,3));});
 test('emoji offsets use original UTF-16 positions', () => assert.equal(edit('😀 a blu',nl('blue')).value,'😀 a blue '));
+
+test('word completion preserves trailing punctuation and closing delimiters', () => {
+  for (const mark of ['.', '!', '?', ';', ':', ')', ']', '}', ',', '。', '、', '！', '？', '」', '』', '）', '】', '"', '”']) {
+    assert.equal(edit(`a blu${mark} Next`, nl('blue'), options, 5).value, `a blue${mark} Next`, mark);
+  }
+});
+
+test('word completion keeps opening punctuation and adjacent emoji outside its range', () => {
+  for (const [text, expected, caret] of [
+    ['a (blu). Next', 'a (blue). Next', 6],
+    ['a 「blu」。次', 'a 「blue」。次', 6],
+    ['😀blu! Next', '😀blue! Next', 5],
+    ['a blu😀 Next', 'a blue😀 Next', 5],
+  ]) assert.equal(edit(text, nl('blue'), options, caret).value, expected, text);
+});
+
+test('word completion replaces the full unfinished token and matching phrase suffix', () => {
+  assert.equal(edit('a bluish. Next', nl('blue'), options, 5).value, 'a blue. Next');
+  assert.equal(edit('a soft natural. Next', nl('soft natural lighting'), options, 10).value, 'a soft natural lighting. Next');
+  assert.equal(edit('a well-lit. Next', nl('well-lit'), options, 9).value, 'a well-lit. Next');
+  assert.equal(edit("a don't! Next", nl("don't"), options, 5).value, "a don't! Next");
+  assert.equal(edit('a don’t! Next', nl('don’t'), options, 5).value, 'a don’t! Next');
+});
+
+test('Japanese aliases and combining marks retain punctuation and UTF-16 caret positions', () => {
+  const result = edit('😀 長髪。次', nl('long hair'), options, 5);
+  assert.equal(result.value, '😀 long hair。次');
+  assert.equal(result.start, 3); assert.equal(result.end, 5); assert.equal(result.caret, 12);
+  assert.equal(edit('a cafe\u0301! Next', nl('café'), options, 5).value, 'a café! Next');
+});
+
+test('literal symbols and leading apostrophes in word candidates are not duplicated', () => {
+  assert.equal(edit('😀. Next', nl('😀 smile'), options, 2).value, '😀 smile. Next');
+  assert.equal(edit('@fo. Next', nl('@foo'), options, 3).value, '@foo. Next');
+  assert.equal(edit("'tis. Next", nl("'tis"), options, 3).value, "'tis. Next");
+});

@@ -2,7 +2,6 @@ name: Registry publication configuration checks
 on:
   push:
     branches: [main]
-    paths: ['.github/**', '.comfyignore']
   pull_request:
     paths: ['.github/**', '.comfyignore']
 permissions:

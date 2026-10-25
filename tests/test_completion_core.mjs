@@ -57,3 +57,55 @@ test('literal symbols and leading apostrophes in word candidates are not duplica
   assert.equal(edit('@fo. Next', nl('@foo'), options, 3).value, '@foo. Next');
   assert.equal(edit("'tis. Next", nl("'tis"), options, 3).value, "'tis. Next");
 });
+
+const wordContext = (text, pos = text.length) => inputContext(text, pos, pos, 'word');
+const wordEdit = (text, item, opts = options, pos = text.length) => insertionEdit(wordContext(text, pos), item, opts);
+
+test('word unit searches the new single letter after whitespace or a comma', () => {
+  for (const separator of [' ', '  ', '\t', '\n', '\r\n', '　', ', ', ',']) {
+    for (const letter of ['a', 'b']) {
+      const context = wordContext(`with pokeball${separator}${letter}`);
+      assert.equal(context.text, letter);
+      assert.equal(context.tail, letter);
+      assert.equal(context.replaceStart, context.value.length - 1);
+    }
+  }
+});
+
+test('word unit leaves confirmed text intact with Existing and CSV-aware', () => {
+  for (const behavior of ['existing', 'csv']) {
+    for (const preserveFormatting of [false, true]) {
+      assert.equal(wordEdit('with pokeball a', {tag:'apple'}, {...options,behavior,preserveFormatting}).value,
+        'with pokeball apple, ');
+      assert.equal(wordEdit('with pokeball a', {tag:'apple'}, {...options,behavior,preserveFormatting,autoComma:false}).value,
+        'with pokeball apple');
+    }
+  }
+});
+
+test('word unit never expands to a matching confirmed phrase prefix', () => {
+  assert.equal(wordEdit('with soft nat', nl('soft natural lighting')).value, 'with soft soft natural lighting ');
+  assert.equal(wordEdit('with pokeball a', nl('apple')).value, 'with pokeball apple ');
+});
+
+test('word unit preserves comma rules and raw CSV insertion', () => {
+  assert.equal(wordEdit('with pokeball b', {tag:'blue_hair'}, options).value, 'with pokeball blue hair, ');
+  assert.equal(wordEdit('with pokeball b, next', {tag:'blue_hair'}, options, 15).value, 'with pokeball blue hair, next');
+  assert.equal(wordEdit('with pokeball a', {tag:'snippet',meta:{insert_mode:'raw',insert_text:' A_B\n'}}).value, 'with pokeball  A_B\n');
+  assert.equal(wordEdit('with pokeball a', {tag:'apple basket',meta:{insert_mode:'phrase'}}).value, 'with pokeball apple basket, ');
+});
+
+test('word unit keeps Unicode, punctuation and the text to the right', () => {
+  for (const [text,pos,expected] of [
+    ['😀 with pokeball (blu). next',21,'😀 with pokeball (blue). next'],
+    ['with pokeball bluish sky',17,'with pokeball blue sky'],
+    ['with pokeball 長髪。次',16,'with pokeball blue。次'],
+  ]) assert.equal(wordEdit(text,nl('blue'),options,pos).value,expected,text);
+});
+
+test('word unit does not search confirmed text after space or punctuation alone', () => {
+  for (const text of ['with pokeball ', 'with pokeball  ', 'with pokeball, ', 'with pokeball (', 'with pokeball 😀']) {
+    assert.equal(wordContext(text).text, '', text);
+  }
+  assert.equal(inputContext('with pokeball a',15).text,'with pokeball a');
+});

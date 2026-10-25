@@ -2,7 +2,7 @@ export function normalizeSearch(value) {
   return String(value ?? "").toLowerCase().replaceAll("_", " ").trim();
 }
 
-export function inputContext(value, selectionStart, selectionEnd = selectionStart) {
+export function inputContext(value, selectionStart, selectionEnd = selectionStart, unit = 'tag') {
   const end = selectionStart ?? value.length;
   const before = value.slice(0, end);
   const start = Math.max(before.lastIndexOf(","), before.lastIndexOf("\n"), before.lastIndexOf("\r")) + 1;
@@ -13,13 +13,20 @@ export function inputContext(value, selectionStart, selectionEnd = selectionStar
   const right = value.slice(end);
   const wordEnd = end + (right.match(/^[^\s,]*/)?.[0].length ?? 0);
   const segmentRight = right.match(/^[^,\r\n]*/)?.[0] ?? "";
-  return {
+  const context = {
     start, end, replaceStart: start + leading,
     replaceEnd: Math.max(start + leading, end - trailing),
     segmentEnd: end + segmentRight.replace(/[ \t]+$/, "").length,
     wordStart: end - tail.length, wordEnd, tail, text: raw.trim(),
-    value, selectionStart: end, selectionEnd: selectionEnd ?? end,
+    value, selectionStart: end, selectionEnd: selectionEnd ?? end, unit,
   };
+  if (unit === 'word') {
+    const range = currentWordRange(context);
+    context.replaceStart = range.start;
+    context.replaceEnd = range.end;
+    context.text = context.tail = value.slice(range.start, end);
+  }
+  return context;
 }
 
 export function snapshotMatches(context, value, start, end) {
@@ -42,18 +49,24 @@ function replaceUnderscores(text, patterns, protectWildcards) {
   }).join("");
 }
 
+const wordPattern = /[\p{L}\p{M}\p{N}_]+(?:['’\-\u2010\u2011][\p{L}\p{M}\p{N}_]+)*/gu;
+
+function currentWordRange(context) {
+  const position = context.end - context.replaceStart;
+  const current = [...context.value.slice(context.replaceStart, context.segmentEnd).matchAll(wordPattern)]
+    .find(word => word.index < position && position <= word.index + word[0].length);
+  return current
+    ? {start: context.replaceStart + current.index, end: context.replaceStart + current.index + current[0].length}
+    : {start: context.end, end: context.end};
+}
+
 function naturalRange(context, selected, wordMode = false) {
   const segment = context.value.slice(context.replaceStart, context.end);
   // Unicode letters/marks/numbers form words; internal hyphens and apostrophes
   // stay inside them. Punctuation and emoji remain outside the replacement.
-  const wordPattern = /[\p{L}\p{M}\p{N}_]+(?:['’\-\u2010\u2011][\p{L}\p{M}\p{N}_]+)*/gu;
   let start = context.wordStart, end = context.wordEnd;
   if (wordMode) {
-    const position = context.end - context.replaceStart;
-    const current = [...context.value.slice(context.replaceStart, context.segmentEnd).matchAll(wordPattern)]
-      .find(word => word.index < position && position <= word.index + word[0].length);
-    start = current ? context.replaceStart + current.index : context.end;
-    end = current ? context.replaceStart + current.index + current[0].length : context.end;
+    ({start, end} = currentWordRange(context));
   }
   const words = [...segment.matchAll(/\S+/gu)];
   if (wordMode) {
@@ -80,7 +93,7 @@ export function insertionEdit(context, item, options = {}) {
   }
   let start = context.replaceStart;
   let end = context.replaceEnd;
-  if (csv) {
+  if (csv && context.unit !== 'word') {
     if (meta.source_type === "natural_language" || mode === "word") {
       ({start, end} = naturalRange(context, item.tag, mode === "word"));
     } else {
@@ -90,7 +103,7 @@ export function insertionEdit(context, item, options = {}) {
   const value = context.value;
   const after = value.slice(end);
   let replacement = inserted;
-  if (!csv && options.preserveFormatting === false) {
+  if (!csv && options.preserveFormatting === false && context.unit !== 'word') {
     start = context.start;
     end = context.end + (value.slice(context.end).match(/^\s*/)?.[0].length ?? 0);
     const before = value.slice(0, start);

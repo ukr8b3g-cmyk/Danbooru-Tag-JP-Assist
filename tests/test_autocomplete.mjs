@@ -28,7 +28,7 @@ const event = (name,props={})=>Object.assign(new Event(name,{cancelable:true}),p
 const wait = ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const item = {tag:'blue',meta:{source_type:'natural_language',insert_mode:'word',insert_text:'blue'}};
 
-async function fixture({delay=0,orderedSelection=true,savedSort,savedSettings={},fileListFailsOnce=false}={}) {
+async function fixture({delay=0,orderedSelection=true,savedSort,savedSettings={},fileListFailsOnce=false,suggestions=[item]}={}) {
   const window=Object.assign(new EventTarget(),{innerWidth:1000,innerHeight:800});
   const document = new Element();
   document.body=new Element();
@@ -59,7 +59,7 @@ async function fixture({delay=0,orderedSelection=true,savedSort,savedSettings={}
     if(url.includes('/hf-update'))return {ok:true,json:async()=>({updated:false})};
     if(delay)await wait(delay); // Deliberately ignore AbortSignal to model an already queued response.
     if(fail)throw new Error('offline');
-    return {ok:true,json:async()=>({tags:[item],revision})};
+    return {ok:true,json:async()=>({tags:suggestions,revision})};
   };
   const context=vm.createContext({app,core,positionPopup:()=>{},document,Element,HTMLTextAreaElement:Textarea,AbortController,Event,InputEvent:Event,URLSearchParams,Map,Set,WeakMap,WeakSet,console,fetch,setTimeout,clearTimeout,window,requestAnimationFrame:fn=>setTimeout(fn,0),MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}}});
   let source=await readFile(new URL('../web/danbooru_tag_jp_assist.js',import.meta.url),'utf8');
@@ -158,6 +158,39 @@ test('legacy mode omits selected lists; selected tag and translation modes send 
 });
 
 const descendants=root=>[root,...root.children.flatMap(descendants)];
+
+test('word unit sends one-letter queries and commits only after the confirmed space',async()=>{
+  for (const [letter,tag] of [['a','apple'],['b','blue_hair']]) {
+    const f=await fixture({suggestions:[{tag}]});f.setting('CompletionUnit','word');
+    f.type(`with pokeball ${letter}`);await wait(115);
+    const params=new URL(f.calls.filter(c=>c.url.includes('/tags?')).at(-1).url,'http://local').searchParams;
+    assert.equal(params.get('q'),letter);assert.equal(params.get('tail'),letter);
+    assert.ok(f.popup());assert.equal(f.key('Enter').defaultPrevented,true);
+    assert.equal(f.area.value,`with pokeball ${tag.replaceAll('_',' ')}, `);
+    f.type(`with pokeball ${tag.replaceAll('_',' ')} a`);await wait(115);
+    assert.equal(new URL(f.calls.filter(c=>c.url.includes('/tags?')).at(-1).url,'http://local').searchParams.get('q'),'a');
+    f.node.onRemoved();
+  }
+});
+
+test('word unit searches neither an empty new word nor active IME composition',async()=>{
+  const f=await fixture();f.setting('CompletionUnit','word');
+  f.type('with pokeball ');await wait(110);
+  assert.equal(f.calls.filter(c=>c.url.includes('/tags?')).length,0);
+  f.area.dispatchEvent(event('compositionstart'));f.type('with pokeball b');await wait(110);
+  assert.equal(f.calls.filter(c=>c.url.includes('/tags?')).length,0);
+  f.node.onRemoved();
+});
+
+test('word unit changes invalidate pending searches and keep tag unit as the default',async()=>{
+  const f=await fixture({delay:50});
+  assert.equal(f.definitions.get('DanbooruTagJPAssist.CompletionUnit').defaultValue,'tag');
+  f.type('with pokeball b');await wait(95);f.setting('CompletionUnit','word');await wait(70);
+  assert.equal(f.popup(),undefined);f.type('with pokeball b');await wait(160);
+  assert.ok(f.popup());assert.equal(f.key('Enter').defaultPrevented,true);
+  assert.equal(f.area.value,'with pokeball blue, ');f.node.onRemoved();
+});
+
 test('Settings checkboxes persist selection order and arrows reorder without including All',async()=>{
   const f=await fixture({savedSettings:{'DanbooruTagJPAssist.TagFiles':[]}});const root=f.mountFiles('Tag');
   const find=label=>descendants(root).find(el=>el.attributes['aria-label']===label);

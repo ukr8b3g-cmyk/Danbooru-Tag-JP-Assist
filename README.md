@@ -194,6 +194,8 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 
 ## CSV形式
 
+`Settings → Danbooru Tag JP Assist → Autocomplete → Completion unit` を `Word (after spaces)` にすると、`with pokeball a` の `a` から1文字で検索し、その単語だけを置換します。前の確定済み単語・後続の文章は保持します。初期値の `Tag (comma separated)` は従来の動作です。`Completion behavior` とカンマ追加の設定、CSV固有のword／raw挿入規則は維持します。
+
 ヘッダー付きCSVに加え、ヘッダーなしの `tag,category,count,aliases` 形式も読み込めます。ヘッダーなしの4列目は別名として扱う位置で、挿入モードには使いません。不正なCSVはファイル単位で除外し、正常な辞書と通常入力を継続します。
 
 Settings → **Danbooru Tag JP Assist** 内の `Completion behavior` は初期値 `Existing` です。`CSV-aware` を選ぶと、CSVの任意列 `source_type` (`tag` / `natural_language` / `custom`)、`insert_mode` (`tag` / `phrase` / `word` / `raw`)、`category_scheme` を利用します。`tag` と `phrase` は既存のカンマ設定、`word` は空白のみ、`raw` はセルの文字列を変換せず挿入します。自然言語の `word` は複数語にも使えます。列のない利用者CSVは従来動作を維持し、同梱 `natural_language_tags.csv` はCSV-aware時に `natural_language` / `word` として扱います。
@@ -420,6 +422,8 @@ Not bundled:
 - `tags/tag_files/danbooru_tags.csv`: downloaded from Hugging Face at runtime.
 
 ## CSV Format
+
+Set `Settings → Danbooru Tag JP Assist → Autocomplete → Completion unit` to `Word (after spaces)` to search from one letter after a space, such as `a` in `with pokeball a`, and replace only that word. Confirmed words and following text are preserved. The default `Tag (comma separated)` retains existing behavior. Completion behavior, comma preferences and CSV word/raw insertion rules still apply.
 
 Headerless `tag,category,count,aliases` files are supported; the fourth column is not an insertion mode. Malformed files are isolated from healthy dictionaries.
 

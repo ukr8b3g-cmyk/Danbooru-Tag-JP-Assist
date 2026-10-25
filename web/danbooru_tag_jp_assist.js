@@ -12,6 +12,7 @@ const EXT_NAME = "Danbooru.Tag.JP.Assist";
 const AUTOCOMPLETE_DEBOUNCE_MS = 80;
 const SETTINGS = {
   behavior: "DanbooruTagJPAssist.CompletionBehavior",
+  completionUnit: "DanbooruTagJPAssist.CompletionUnit",
   searchJapanese: "DanbooruTagJPAssist.SearchJapanese",
   showSourceType: "DanbooruTagJPAssist.ShowSourceType",
   showSourceFile: "DanbooruTagJPAssist.ShowSourceFile",
@@ -37,6 +38,7 @@ const SETTINGS = {
 };
 const DEFAULTS = {
   behavior: "existing",
+  completionUnit: "tag",
   searchJapanese: true,
   showSourceType: false,
   showSourceFile: false,
@@ -322,7 +324,8 @@ function popupColors() {
 }
 
 function currentToken(textarea) {
-  return inputContext(textarea.value, textarea.selectionStart, textarea.selectionEnd);
+  return inputContext(textarea.value, textarea.selectionStart, textarea.selectionEnd,
+    getSetting(SETTINGS.completionUnit, DEFAULTS.completionUnit));
 }
 
 function insertTag(textarea, token, item) {
@@ -659,6 +662,12 @@ function scheduleNodeTextareaScan(node, frameOnly = false) {
 }
 
 async function addSettings() {
+  addSetting({
+    id: SETTINGS.completionUnit, name: "Completion unit", type: "combo",
+    category: ["Danbooru Tag JP Assist", "Autocomplete", "Completion unit"],
+    options: [{value: "tag", text: "Tag (comma separated)"}, {value: "word", text: "Word (after spaces)"}],
+    defaultValue: DEFAULTS.completionUnit,
+  });
   addSetting({
     id: SETTINGS.behavior, name: "Completion behavior", type: "combo",
     category: ["Danbooru Tag JP Assist", "Autocomplete", "Completion behavior"],

@@ -182,13 +182,24 @@ test('word unit searches neither an empty new word nor active IME composition',a
   f.node.onRemoved();
 });
 
-test('word unit changes invalidate pending searches and keep tag unit as the default',async()=>{
-  const f=await fixture({delay:50});
-  assert.equal(f.definitions.get('DanbooruTagJPAssist.CompletionUnit').defaultValue,'tag');
+test('word unit is the default while saved tag mode is preserved and switching invalidates searches',async()=>{
+  const f=await fixture({delay:50,savedSettings:{'DanbooruTagJPAssist.CompletionUnit':'tag'}});
+  assert.equal(f.definitions.get('DanbooruTagJPAssist.CompletionUnit').defaultValue,'word');
+  assert.equal(f.settings.get('DanbooruTagJPAssist.CompletionUnit'),'tag');
   f.type('with pokeball b');await wait(95);f.setting('CompletionUnit','word');await wait(70);
   assert.equal(f.popup(),undefined);f.type('with pokeball b');await wait(160);
   assert.ok(f.popup());assert.equal(f.key('Enter').defaultPrevented,true);
   assert.equal(f.area.value,'with pokeball blue, ');f.node.onRemoved();
+});
+
+test('unsaved word default searches and inserts after both spaces and commas without setup',async()=>{
+  for (const separator of [' ', ', ']) {
+    const f=await fixture({suggestions:[{tag:'apple'}]});
+    f.type(`test${separator}a`);await wait(115);
+    const params=new URL(f.calls.filter(c=>c.url.includes('/tags?')).at(-1).url,'http://local').searchParams;
+    assert.equal(params.get('q'),'a');assert.ok(f.popup());f.key('Enter');
+    assert.equal(f.area.value,`test${separator}apple, `);f.node.onRemoved();
+  }
 });
 
 test('Settings checkboxes persist selection order and arrows reorder without including All',async()=>{

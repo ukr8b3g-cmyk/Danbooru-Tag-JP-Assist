@@ -6,6 +6,8 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 [English README](#english-readme)
 
+> **スペース・カンマの後も補完するには**：`Completion unit` の初期値は **Word (after spaces)** です。保存済みの `Tag (comma separated)` は自動変更しません。Settingsで **Completion unit** を検索して切り替えてください。`Completion behavior / CSV-aware`とは別の設定です。項目が見つからない場合はワークフローを保存し、**Ctrl + F5** で画面を再読込してください。
+
 ## What’s New — v0.4.2（2026-10-24）
 
 - **自然言語補完で句読点を保持**：CSV-awareのword候補を確定しても、直後の句読点・閉じ括弧を削除しません。語中の置換、日本語別名、UTF-16位置、内部のハイフン・アポストロフィー、記号を含む候補にも対応します。既存のtag／raw／phrase挿入規則は維持します。
@@ -112,8 +114,9 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 1. ComfyUI の Settings を開きます。
 2. `Danbooru Tag JP Assist` を有効にします。
 3. タグ・翻訳の `Selection mode` は初期値の `Selected CSVs only` を使い、それぞれのチェックリストで使うCSVを選びます。
-4. ノードの複数行プロンプト欄に英語または日本語を入力します。
-5. 候補をキーボードまたはマウスで選択します。
+4. `Autocomplete → Completion unit` を確認します。初期値の **Word (after spaces)** なら、スペース・カンマの後に入力する1文字から補完できます。従来のカンマ区切りだけで使う場合は **Tag (comma separated)** を選びます。保存済みの選択は維持します。
+5. ノードの複数行プロンプト欄に英語または日本語を入力します。例えば `test a` と `test, a` は、どちらも `a` だけで候補を検索します。
+6. 候補をキーボードまたはマウスで選択します。`apple`を確定すると `test apple`／`test, apple` となり、前の確定済み部分は保持します。確定後のカンマ追加は既存の設定・CSV挿入形式に従います。
 
 初期設定ではタグ・翻訳とも `Selected CSVs only` になり、未保存のチェックリストは利用可能なCSVを選択した状態で始まります。保存済みのモードと選択内容は維持します。後から追加したCSVはチェックリストで選択してください。
 
@@ -194,7 +197,7 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 
 ## CSV形式
 
-`Settings → Danbooru Tag JP Assist → Autocomplete → Completion unit` を `Word (after spaces)` にすると、`with pokeball a` の `a` から1文字で検索し、その単語だけを置換します。前の確定済み単語・後続の文章は保持します。初期値の `Tag (comma separated)` は従来の動作です。`Completion behavior` とカンマ追加の設定、CSV固有のword／raw挿入規則は維持します。
+`Settings → Danbooru Tag JP Assist → Autocomplete → Completion unit` の初期値は `Word (after spaces)` です。スペース・カンマの後の単語を1文字から検索し、その単語だけを置換します。前の確定済み単語・後続の文章は保持します。保存済みの `Tag (comma separated)` は従来の動作を維持します。`Completion behavior` とカンマ追加の設定、CSV固有のword／raw挿入規則は維持します。
 
 ヘッダー付きCSVに加え、ヘッダーなしの `tag,category,count,aliases` 形式も読み込めます。ヘッダーなしの4列目は別名として扱う位置で、挿入モードには使いません。不正なCSVはファイル単位で除外し、正常な辞書と通常入力を継続します。
 
@@ -282,6 +285,8 @@ CSVを追加・削除したあと、Settings のリストが更新されない�
 Danbooru Tag JP Assist adds tag suggestions to multiline text areas that belong to ComfyUI nodes.
 
 It is intended for users who want to search English Danbooru tags and English prompt vocabulary with optional Japanese aliases.
+
+> **Completion after spaces and commas:** `Completion unit` defaults to **Word (after spaces)**. A saved **Tag (comma separated)** choice is preserved; search Settings for **Completion unit** to change it. This is separate from **Completion behavior / CSV-aware**. If the option is missing, save your workflow and hard-refresh with **Ctrl + F5**.
 
 ## What’s New — v0.4.2 (2026-10-24)
 
@@ -378,8 +383,9 @@ If Hugging Face is offline or the source file disappears, the node keeps using t
 1. Open ComfyUI Settings.
 2. Enable `Danbooru Tag JP Assist`.
 3. Keep both selection modes at the default `Selected CSVs only` and choose files in the tag and translation checklists.
-4. Type English or Japanese text in a multiline prompt box on a node.
-5. Select a suggestion with the keyboard or mouse.
+4. Check `Autocomplete → Completion unit`. The default **Word (after spaces)** completes from one letter after a space or comma. Choose **Tag (comma separated)** for the previous comma-only behavior. Saved choices are preserved.
+5. Type English or Japanese text in a multiline prompt box. Both `test a` and `test, a` search only `a`.
+6. Select a suggestion with the keyboard or mouse. Choosing `apple` produces `test apple` or `test, apple`, preserving confirmed text. Any appended comma follows existing preferences and CSV insertion modes.
 
 Both selection modes default to `Selected CSVs only`. Unsaved checklists start with the available CSVs selected. Saved modes and selections are preserved. Select newly added CSVs in the checklists.
 
@@ -423,7 +429,7 @@ Not bundled:
 
 ## CSV Format
 
-Set `Settings → Danbooru Tag JP Assist → Autocomplete → Completion unit` to `Word (after spaces)` to search from one letter after a space, such as `a` in `with pokeball a`, and replace only that word. Confirmed words and following text are preserved. The default `Tag (comma separated)` retains existing behavior. Completion behavior, comma preferences and CSV word/raw insertion rules still apply.
+`Settings → Danbooru Tag JP Assist → Autocomplete → Completion unit` defaults to `Word (after spaces)`: search from one letter after a space or comma and replace only that word. Confirmed words and following text are preserved. A saved `Tag (comma separated)` choice retains the previous behavior. Completion behavior, comma preferences and CSV word/raw insertion rules still apply.
 
 Headerless `tag,category,count,aliases` files are supported; the fourth column is not an insertion mode. Malformed files are isolated from healthy dictionaries.
 

@@ -38,7 +38,7 @@ const SETTINGS = {
 };
 const DEFAULTS = {
   behavior: "existing",
-  completionUnit: "tag",
+  completionUnit: "word",
   searchJapanese: true,
   showSourceType: false,
   showSourceFile: false,

@@ -159,6 +159,29 @@ test('legacy mode omits selected lists; selected tag and translation modes send 
 
 const descendants=root=>[root,...root.children.flatMap(descendants)];
 
+test('new and cached candidate lists reopen at the top after manual scrolling',async()=>{
+  const f=await fixture({suggestions:Array.from({length:40},(_,i)=>({tag:`item_${i}`}))});
+  f.type('a');await wait(115);
+  for(const text of ['b','a','test, a']) {
+    f.popup().scrollTop=600;
+    f.type(text);await wait(115);
+    assert.equal(f.popup().scrollTop,0,text);
+  }
+  f.popup().scrollTop=600;f.key('Escape');f.type('test, a');await wait(115);
+  assert.equal(f.popup().scrollTop,0,'reopen after Escape');f.node.onRemoved();
+});
+
+test('browsing and appearance updates retain scroll while arrow navigation stays active',async()=>{
+  const f=await fixture({suggestions:[{tag:'first'},{tag:'second'}]});
+  f.type('a');await wait(115);const popup=f.popup();popup.scrollTop=600;
+  f.setting('PopupTheme','amber');assert.equal(popup.scrollTop,600);
+  await wait(115);assert.equal(popup.scrollTop,600);
+  const rows=descendants(popup).filter(el=>el.style.cssText?.includes('cursor:pointer'));
+  const visited=[];rows.forEach((row,index)=>{row.scrollIntoView=()=>visited.push(index);});
+  f.key('ArrowDown');f.key('ArrowUp');assert.deepEqual(visited,[1,0]);
+  assert.equal(popup.scrollTop,600);f.node.onRemoved();
+});
+
 test('word unit sends one-letter queries and commits only after the confirmed space',async()=>{
   for (const [letter,tag] of [['a','apple'],['b','blue_hair']]) {
     const f=await fixture({suggestions:[{tag}]});f.setting('CompletionUnit','word');

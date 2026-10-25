@@ -559,6 +559,7 @@ function attachAutocomplete(textarea, node) {
       activeAutocomplete = controller;
       popup.style.display = "block";
       render();
+      popup.scrollTop = 0;
       positionPopup(textarea, popup);
     } catch (error) {
       if (valid()) hide();

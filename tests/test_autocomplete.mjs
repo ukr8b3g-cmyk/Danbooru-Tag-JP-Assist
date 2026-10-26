@@ -28,7 +28,7 @@ const event = (name,props={})=>Object.assign(new Event(name,{cancelable:true}),p
 const wait = ms=>new Promise(resolve=>setTimeout(resolve,ms));
 const item = {tag:'blue',meta:{source_type:'natural_language',insert_mode:'word',insert_text:'blue'}};
 
-async function fixture({delay=0,orderedSelection=true,savedSort,savedSettings={},fileListFailsOnce=false,suggestions=[item]}={}) {
+async function fixture({delay=0,orderedSelection=true,savedSort,savedSettings={},fileListFailsOnce=false,suggestions=[item],tagFiles=['a.csv','b.csv','All']}={}) {
   const window=Object.assign(new EventTarget(),{innerWidth:1000,innerHeight:800});
   const document = new Element();
   document.body=new Element();
@@ -53,7 +53,7 @@ async function fixture({delay=0,orderedSelection=true,savedSort,savedSettings={}
     calls.push({url,signal:options.signal});
     if(url.includes('/files')) {
       if(fileListFailsOnce) {fileListFailsOnce=false;throw new Error('file list temporarily unavailable');}
-      return {ok:true,json:async()=>({tag_files:['a.csv','b.csv','All'],translation_files:['ja.csv','nl.csv','All'],ordered_selection:orderedSelection})};
+      return {ok:true,json:async()=>({tag_files:tagFiles,translation_files:['ja.csv','nl.csv','All'],ordered_selection:orderedSelection})};
     }
     if(url.includes('/revision'))return {ok:true,json:async()=>({revision,ordered_selection:orderedSelection})};
     if(url.includes('/hf-update'))return {ok:true,json:async()=>({updated:false})};
@@ -61,7 +61,7 @@ async function fixture({delay=0,orderedSelection=true,savedSort,savedSettings={}
     if(fail)throw new Error('offline');
     return {ok:true,json:async()=>({tags:suggestions,revision})};
   };
-  const context=vm.createContext({app,core,positionPopup:()=>{},document,Element,HTMLTextAreaElement:Textarea,AbortController,Event,InputEvent:Event,URLSearchParams,Map,Set,WeakMap,WeakSet,console,fetch,setTimeout,clearTimeout,window,requestAnimationFrame:fn=>setTimeout(fn,0),MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}}});
+  const context=vm.createContext({app,core,installPopupResize:()=>({handle:new Element(),place(){},cancel(){}}),document,Element,HTMLTextAreaElement:Textarea,AbortController,Event,InputEvent:Event,URLSearchParams,Map,Set,WeakMap,WeakSet,console,fetch,setTimeout,clearTimeout,window,requestAnimationFrame:fn=>setTimeout(fn,0),MutationObserver:class{constructor(callback){observerCallback=callback;}observe(){}}});
   let source=await readFile(new URL('../web/danbooru_tag_jp_assist.js',import.meta.url),'utf8');
   source=source.replace(/^import .*$/gm,'').replace('const API_URLS', 'const {inputContext,snapshotMatches,insertionEdit}=core;\nconst API_URLS');
   vm.runInContext(source,context);
@@ -412,6 +412,16 @@ test('count is the default search order while saved choices win',async()=>{
     f.type('blu');await wait(110);
     const request=f.calls.find(call=>call.url.includes('/tags?'));
     assert.equal(new URL(request.url,'http://localhost').searchParams.get('sort'),savedSort??'count');
+    f.node.onRemoved();
+  }
+});
+
+test('merged dictionary alone is the new tag default while saved choices win',async()=>{
+  for(const saved of [undefined,[],['b.csv']]) {
+    const f=await fixture({tagFiles:['tags_merged_dedup.csv','e621.csv','natural_language_tags.csv','All'],savedSettings:saved===undefined?{}:{'DanbooruTagJPAssist.TagFiles':saved}});
+    f.type('blu');await wait(110);
+    const params=new URL(f.calls.filter(c=>c.url.includes('/tags?')).at(-1).url,'http://local').searchParams;
+    assert.deepEqual(JSON.parse(params.get('tag_files')),saved??['tags_merged_dedup.csv']);
     f.node.onRemoved();
   }
 });

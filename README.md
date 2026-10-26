@@ -1,5 +1,12 @@
 # Danbooru Tag JP Assist
 
+## 候補ボックスの高さ変更 / Resize suggestions
+
+候補の下端をドラッグして高さを変更できます。文字の上側に表示される場合は上端を操作します。高さは保存され、Settings → Danbooru Tag JP Assist → Display → Suggestion popup height (px)でも変更できます（初期240px）。画面の空きスペースに合わせて一時的に縮めます。保存済みのCSV選択は維持し、新規タグ選択はtags_merged_dedup.csvのみです。
+
+Drag the bottom edge to resize suggestions, or the top edge when the popup is above the caret. Height is saved and can also be changed in Settings → Danbooru Tag JP Assist → Display → Suggestion popup height (px), default 240px. Available viewport space limits the displayed height. Saved CSV choices are preserved; new tag selections use only tags_merged_dedup.csv.
+
+
 Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄でタグ候補を表示する補完ノードです。
 
 日本語で検索しながら、英語タグや英語の自然言語ワードをプロンプトへ入力できます。
@@ -118,7 +125,7 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 5. ノードの複数行プロンプト欄に英語または日本語を入力します。例えば `test a` と `test, a` は、どちらも `a` だけで候補を検索します。
 6. 候補をキーボードまたはマウスで選択します。`apple`を確定すると `test apple`／`test, apple` となり、前の確定済み部分は保持します。確定後のカンマ追加は既存の設定・CSV挿入形式に従います。
 
-初期設定ではタグ・翻訳とも `Selected CSVs only` になり、未保存のチェックリストは利用可能なCSVを選択した状態で始まります。保存済みのモードと選択内容は維持します。後から追加したCSVはチェックリストで選択してください。
+初期設定ではタグ・翻訳とも `Selected CSVs only` です。タグの初期選択は `tags_merged_dedup.csv` のみです。このCSVがない場合は利用可能なCSVを選択する従来動作に戻ります。翻訳の未保存チェックリストは利用可能なCSVで初期化します。保存済みのモード・選択・空選択は維持します。追加の辞書はSettingsのチェックリストで選択してください。
 
 従来の `All / single priority` / `All / single file` モードでは以下の動作になります。
 
@@ -387,7 +394,7 @@ If Hugging Face is offline or the source file disappears, the node keeps using t
 5. Type English or Japanese text in a multiline prompt box. Both `test a` and `test, a` search only `a`.
 6. Select a suggestion with the keyboard or mouse. Choosing `apple` produces `test apple` or `test, apple`, preserving confirmed text. Any appended comma follows existing preferences and CSV insertion modes.
 
-Both selection modes default to `Selected CSVs only`. Unsaved checklists start with the available CSVs selected. Saved modes and selections are preserved. Select newly added CSVs in the checklists.
+Both selection modes default to `Selected CSVs only`. The initial tag selection is only `tags_merged_dedup.csv`; when it is unavailable, the previous available-file defaults apply. Unsaved translation lists start with available translation CSVs. Saved modes, selections and empty selections are preserved. Select additional dictionaries in the Settings checklists.
 
 Behavior in the legacy `All / single priority` / `All / single file` modes:
 

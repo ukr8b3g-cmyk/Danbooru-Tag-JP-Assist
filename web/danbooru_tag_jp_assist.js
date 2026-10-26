@@ -2,7 +2,7 @@ import { app } from "/scripts/app.js";
 import { inputContext, snapshotMatches, insertionEdit } from "./lib/completion_core.js";
 
 import { installFormatting } from "./lib/format_ui.js";
-import { positionPopup } from "./lib/caret_popup.js";
+import { installPopupResize } from "./lib/caret_popup.js";
 import { installTooltipCleanup } from "./lib/tooltip_cleanup.js";
 
 const API_URLS = ["/danbooru-tag-jp-assist/tags", "/jp-tag-autocomplete-test/tags"];
@@ -28,6 +28,7 @@ const SETTINGS = {
   sortOrder: "DanbooruTagJPAssist.SortOrder",
   tagSource: "DanbooruTagJPAssist.TagSource",
   popupTheme: "DanbooruTagJPAssist.PopupTheme",
+  popupHeight: "DanbooruTagJPAssist.PopupHeight",
   tagFile: "DanbooruTagJPAssist.TagFile",
   translationFile: "DanbooruTagJPAssist.TranslationFile",
   tagSelectionMode: "DanbooruTagJPAssist.TagSelectionMode",
@@ -54,6 +55,7 @@ const DEFAULTS = {
   sortOrder: "count",
   tagSource: "both",
   popupTheme: "cyan",
+  popupHeight: 240,
   tagFile: "All",
   translationFile: "All",
   tagSelectionMode: "selected",
@@ -85,7 +87,7 @@ function invalidateResults() {
 
 const APPEARANCE_ONLY_SETTINGS = new Set([
   SETTINGS.showSourceType, SETTINGS.showSourceFile, SETTINGS.showPostCount,
-  SETTINGS.showJapanese, SETTINGS.popupTheme,
+  SETTINGS.showJapanese, SETTINGS.popupTheme, SETTINGS.popupHeight,
 ]);
 
 function addSetting(definition) {
@@ -167,6 +169,11 @@ function orderedNames(value) {
   return Array.isArray(value) ? [...new Set(value.filter(name => typeof name === "string" && name !== "All" && name !== "all"))] : [];
 }
 
+function defaultTagFiles(files) {
+  const names = orderedNames(files);
+  return names.includes("tags_merged_dedup.csv") ? ["tags_merged_dedup.csv"] : names;
+}
+
 function addFileSelection(kind, files) {
   const id = SETTINGS[`${kind}Files`];
   addSetting({
@@ -240,7 +247,7 @@ function addFileSelection(kind, files) {
 async function refreshFileSelections() {
   fileListCache = null;
   const files = await loadFileList();
-  DEFAULTS.tagFiles = orderedNames(files.tag_files);
+  DEFAULTS.tagFiles = defaultTagFiles(files.tag_files);
   DEFAULTS.translationFiles = orderedNames(files.translation_files);
   for (const editor of fileSelectionEditors) {
     if (editor.root.isConnected) editor.refresh(files);
@@ -410,6 +417,14 @@ function attachAutocomplete(textarea, node) {
   if (!shouldAttach(textarea) || textareaControllers.has(textarea)) return;
   const popup = makePopup();
   const listeners = new AbortController();
+  const resize = installPopupResize(textarea, popup, {
+    getHeight: () => getSetting(SETTINGS.popupHeight, DEFAULTS.popupHeight),
+    saveHeight: height => {
+      const saved = app.ui.settings.setSettingValue(SETTINGS.popupHeight, height);
+      Promise.resolve(saved).catch(error => console.warn('JP Assist: could not save popup height', error));
+    },
+    signal: listeners.signal,
+  });
   // Keep scrollbar presses away from ComfyUI's outside-widget blur handler.
   popup.addEventListener("mousedown", ev => ev.stopPropagation(), {signal: listeners.signal});
   const listen = (type, handler) => textarea.addEventListener(type, handler, {signal: listeners.signal});
@@ -426,6 +441,7 @@ function attachAutocomplete(textarea, node) {
   let compositionKeyPending = false;
 
   function hide() {
+    resize.cancel();
     popup.style.display = "none";
     popup.replaceChildren();
     items = [];
@@ -477,7 +493,7 @@ function attachAutocomplete(textarea, node) {
   }
 
   function refreshAppearance() {
-    if (!destroyed && items.length && popup.style.display !== "none") render();
+    if (!destroyed && items.length && popup.style.display !== "none") {render(); resize.place();}
   }
 
   const controller = {textarea, node, popup, hide, invalidate, destroy, selectionChanged, refreshAppearance};
@@ -525,6 +541,7 @@ function attachAutocomplete(textarea, node) {
       fragment.append(row);
     });
     popup.append(fragment);
+    popup.append(resize.handle);
   }
 
   function setActive(index) {
@@ -560,7 +577,7 @@ function attachAutocomplete(textarea, node) {
       popup.style.display = "block";
       render();
       popup.scrollTop = 0;
-      positionPopup(textarea, popup);
+      resize.place();
     } catch (error) {
       if (valid()) hide();
       if (error.name !== "AbortError") console.debug("JP Assist search unavailable", error.message);
@@ -584,7 +601,7 @@ function attachAutocomplete(textarea, node) {
   const reposition = () => {
     if (!destroyed && items.length) {
       popup.style.display = "block";
-      positionPopup(textarea, popup);
+      resize.place();
     }
   };
   listen("scroll", reposition);
@@ -663,6 +680,9 @@ function scheduleNodeTextareaScan(node, frameOnly = false) {
 }
 
 async function addSettings() {
+  addSetting({id: SETTINGS.popupHeight, name: "Suggestion popup height (px)", type: "number",
+    defaultValue: DEFAULTS.popupHeight, attrs: {min:120, max:4096, step:10},
+    category: ["Danbooru Tag JP Assist", "Display", "Suggestion popup height"]});
   addSetting({
     id: SETTINGS.completionUnit, name: "Completion unit", type: "combo",
     category: ["Danbooru Tag JP Assist", "Autocomplete", "Completion unit"],
@@ -703,7 +723,7 @@ async function addSettings() {
   const files = await loadFileList();
   const tagFiles = Array.isArray(files.tag_files) && files.tag_files.length ? files.tag_files : ["All"];
   const translationFiles = Array.isArray(files.translation_files) && files.translation_files.length ? files.translation_files : ["All"];
-  DEFAULTS.tagFiles = orderedNames(tagFiles);
+  DEFAULTS.tagFiles = defaultTagFiles(tagFiles);
   DEFAULTS.translationFiles = orderedNames(translationFiles);
   addSetting({
     id: SETTINGS.enabled,

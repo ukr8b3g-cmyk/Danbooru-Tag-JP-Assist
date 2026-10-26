@@ -21,7 +21,7 @@ venv/
 /tags/tag_files/**
 !/tags/tag_files/anima_artists.csv
 !/tags/tag_files/anima_characters.csv
-!/tags/tag_files/danbooru_2025.csv
+!/tags/tag_files/tags_merged_dedup.csv
 !/tags/tag_files/e621.csv
 !/tags/tag_files/natural_language_tags.csv
 /tags/translation_files/**

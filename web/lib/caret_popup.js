@@ -34,7 +34,12 @@ export function caretRect(textarea) {
   }
 }
 
-export function positionPopup(textarea, popup) {
+export function popupHeight(value) {
+  const height = Number(value);
+  return Number.isFinite(height) && height > 0 ? Math.max(120, Math.min(4096, height)) : 240;
+}
+
+export function positionPopup(textarea, popup, preferredHeight = 240, direction = null) {
   const caret = caretRect(textarea);
   if (!caret) {popup.style.display = 'none'; return;}
   const margin = 8, gap = 4;
@@ -45,8 +50,58 @@ export function positionPopup(textarea, popup) {
   popup.style.left = `${Math.max(margin, Math.min(caret.left, window.innerWidth - width - margin))}px`;
   const below = Math.max(0, window.innerHeight - margin - caret.bottom - gap);
   const above = Math.max(0, caret.top - margin - gap);
-  const upwards = below < Math.min(240, popup.scrollHeight) && above > below;
-  const height = Math.min(240, upwards ? above : below);
+  const desired = popupHeight(preferredHeight);
+  const upwards = direction ?? (below < Math.min(desired, popup.scrollHeight) && above > below);
+  const height = Math.min(desired, upwards ? above : below);
   popup.style.maxHeight = `${height}px`;
   popup.style.top = `${upwards ? Math.max(margin, caret.top - gap - Math.min(height, popup.scrollHeight + 2)) : Math.max(margin, caret.bottom + gap)}px`;
+  return upwards;
+}
+
+export function installPopupResize(textarea, popup, {getHeight, saveHeight, signal}) {
+  const handle = document.createElement('div');
+  handle.className = 'jp-tag-ac-resize';
+  handle.title = 'Drag to resize / ドラッグで高さを変更';
+  handle.style.cssText = 'position:fixed;height:8px;cursor:ns-resize;touch-action:none;user-select:none;z-index:1000000;background:linear-gradient(transparent,rgba(128,128,128,.5),transparent);border-radius:4px';
+  let drag = null;
+  const stop = e => {e.preventDefault(); e.stopPropagation();};
+  function place() {
+    const up = positionPopup(textarea, popup, drag?.height ?? getHeight(), drag?.up);
+    if (popup.style.display === 'none') return;
+    const rect = popup.getBoundingClientRect();
+    Object.assign(handle.style, {left:`${rect.left + 2}px`, width:`${Math.max(0, rect.width - 4)}px`,
+      top:`${up ? rect.top : rect.bottom - 8}px`});
+    return up;
+  }
+  function cancel() {
+    if (drag && handle.hasPointerCapture(drag.id)) handle.releasePointerCapture(drag.id);
+    drag = null;
+  }
+  handle.addEventListener('mousedown', stop, {signal});
+  handle.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    stop(e);
+    const up = place();
+    drag = {id:e.pointerId, y:e.clientY, initial:popup.getBoundingClientRect().height, up};
+    drag.height = drag.initial;
+    handle.setPointerCapture(e.pointerId);
+  }, {signal});
+  handle.addEventListener('pointermove', e => {
+    if (!drag || drag.id !== e.pointerId) return;
+    stop(e);
+    drag.height = popupHeight(drag.initial + (e.clientY - drag.y) * (drag.up ? -1 : 1));
+    place();
+  }, {signal});
+  handle.addEventListener('pointerup', e => {
+    if (!drag || drag.id !== e.pointerId) return;
+    stop(e);
+    const height = drag.height;
+    cancel();
+    saveHeight(Math.round(popupHeight(height)));
+    place();
+  }, {signal});
+  handle.addEventListener('pointercancel', () => {cancel(); place();}, {signal});
+  handle.addEventListener('lostpointercapture', () => {if (drag) {drag = null; place();}}, {signal});
+  signal.addEventListener('abort', cancel, {once:true});
+  return {handle, place, cancel};
 }

@@ -1,10 +1,28 @@
 const tooltipSelector = '.p-tooltip[role="tooltip"][data-pc-name="tooltip"]';
+const ownerSelector = '[data-pd-tooltip], [aria-describedby]';
+const settingsSelector = '[data-setting-id^="DanbooruTagJPAssist."], [id^="DanbooruTagJPAssist."]';
 
-export function removeStaleTooltips(root = document) {
-  const tooltips = [...root.querySelectorAll(tooltipSelector)];
-  if (!tooltips.length) return;
+function rememberOwnedTooltips(root, ownedIds) {
+  const hosts = [...root.querySelectorAll(ownerSelector)];
+  if (root.matches?.(ownerSelector)) hosts.push(root);
+  for (const host of hosts) {
+    if (!host.closest(settingsSelector)) continue;
+    for (const owner of [host, host.querySelector?.('input')]) {
+      if (!owner) continue;
+      for (const id of [owner.$_ptooltipId, owner.$_ptooltipIdAttr,
+        ...(owner.getAttribute('aria-describedby') ?? '').split(/\s+/)]) {
+        if (id) ownedIds.add(id);
+      }
+    }
+  }
+}
+
+export function removeStaleTooltips(root = document, ownedIds = new Set()) {
+  rememberOwnedTooltips(root, ownedIds);
+  const tooltips = [...root.querySelectorAll(tooltipSelector)].filter(tooltip => ownedIds.has(tooltip.id));
+  if (!tooltips.length) { ownedIds.clear(); return; }
   const liveIds = new Set();
-  for (const host of root.querySelectorAll('[data-pd-tooltip], [aria-describedby]')) {
+  for (const host of root.querySelectorAll(ownerSelector)) {
     // PrimeVue puts the directive on a wrapper but owns input tooltips on its input.
     for (const owner of [host, host.querySelector?.('input')]) {
       if (!owner?.isConnected || !owner.getClientRects().length) continue;
@@ -23,20 +41,26 @@ export function removeStaleTooltips(root = document) {
       tooltip.remove();
     } else seen.add(tooltip.id);
   }
+  for (const id of ownedIds) if (!seen.has(id)) ownedIds.delete(id);
 }
 
 export function installTooltipCleanup() {
+  const ownedIds = new Set();
   let pending = false;
   const schedule = () => {
-    if (pending || !document.querySelector(tooltipSelector)) return;
+    rememberOwnedTooltips(document, ownedIds);
+    if (pending || !ownedIds.size || !document.querySelector(tooltipSelector)) return;
     pending = true;
     // Let PrimeVue finish assigning ownership and placement before inspecting it.
     requestAnimationFrame(() => requestAnimationFrame(() => {
       pending = false;
-      removeStaleTooltips();
+      removeStaleTooltips(document, ownedIds);
     }));
   };
   const observer = new MutationObserver(records => {
+    for (const record of records) for (const node of record.removedNodes) {
+      if (node.nodeType === 1) rememberOwnedTooltips(node, ownedIds);
+    }
     if (records.some(record => record.removedNodes.length || [...record.addedNodes].some(node =>
       node.nodeType === 1 && (node.matches(tooltipSelector) || node.querySelector(tooltipSelector))))) schedule();
   });

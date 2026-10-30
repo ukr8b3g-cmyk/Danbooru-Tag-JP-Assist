@@ -1,7 +1,9 @@
 // Measure textarea text in an untransformed mirror; convert back to viewport pixels.
 export function caretRect(textarea) {
+  const document = textarea.ownerDocument ?? globalThis.document;
+  const view = document.defaultView ?? globalThis.window;
   const rect = textarea.getBoundingClientRect();
-  const style = getComputedStyle(textarea);
+  const style = view.getComputedStyle(textarea);
   const mirror = document.createElement('div');
   for (const key of ['fontFamily','fontSize','fontWeight','fontStyle','fontVariant','fontStretch',
     'lineHeight','letterSpacing','wordSpacing','textAlign','textIndent','textTransform',
@@ -40,6 +42,7 @@ export function popupHeight(value) {
 }
 
 export function positionPopup(textarea, popup, preferredHeight = 240, direction = null) {
+  const window = textarea.ownerDocument?.defaultView ?? globalThis.window;
   const caret = caretRect(textarea);
   if (!caret) {popup.style.display = 'none'; return;}
   const margin = 8, gap = 4;
@@ -59,6 +62,7 @@ export function positionPopup(textarea, popup, preferredHeight = 240, direction 
 }
 
 export function installPopupResize(textarea, popup, {getHeight, saveHeight, signal}) {
+  const document = textarea.ownerDocument ?? globalThis.document;
   const handle = document.createElement('div');
   handle.className = 'jp-tag-ac-resize';
   handle.title = 'Drag to resize / ドラッグで高さを変更';

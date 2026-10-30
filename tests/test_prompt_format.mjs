@@ -52,6 +52,29 @@ test('bulk recognition excludes notes and code nodes',()=>{
   assert.equal(isPromptController(c('Note')),false);
   assert.equal(isPromptController(c('UnknownNode')),false);
 });
+test('custom prompt fields opt into batch formatting; literal wording requires explicit current input',()=>{
+  const handlers=new Map(),values=new Map();
+  const area=marker=>({value:'blue,,  sky',dataset:{jpAssistFormat:marker},isConnected:true,selectionStart:11,selectionEnd:11,
+    focus(){document.activeElement=this;},setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;},dispatchEvent(){}});
+  const prompt=area('prompt'),literal=area('literal'),extra=area(undefined),other=area('prompt');
+  const node={type:'MOSSSharedPrompter',widgets:[{name:'krea2_prompt_ui',element:{contains:()=>true}}]};
+  const controllers=[prompt,literal,extra].map(textarea=>({textarea,node}));
+  controllers.push({textarea:other,node:{type:'MOSSSharedPrompter'}});
+  globalThis.document={activeElement:prompt,body:{},querySelector(){return null;},createElement(){return new ButtonElement();},addEventListener(name,fn){handlers.set(name,fn);},
+    execCommand(_cmd,_ui,text){const el=this.activeElement;el.value=el.value.slice(0,el.selectionStart)+text+el.value.slice(el.selectionEnd);return true;}};
+  globalThis.MutationObserver=class{observe(){}};globalThis.window={addEventListener(){}};
+  const app={canvas:{selected_nodes:{one:node}},ui:{settings:{addSetting(){},getSettingValue:id=>values.get(id)}}};
+  try {
+    const {run}=installFormatting(app,{getControllers:()=>controllers,begin(){},end(){}});
+    assert.equal(run(),2);assert.equal(prompt.value,'blue, sky');assert.equal(literal.value,'blue,,  sky');assert.equal(extra.value,'blue,,  sky');
+    prompt.value=other.value='red,,  sky';values.set('DanbooruTagJPAssist.FormatScope','selected');
+    assert.equal(run(),1);assert.equal(prompt.value,'red, sky');assert.equal(other.value,'red,,  sky');
+    values.set('DanbooruTagJPAssist.FormatScope','current');
+    document.activeElement=literal;handlers.get('focusin')({target:literal});
+    document.activeElement={};assert.equal(run(),1);assert.equal(literal.value,'blue, sky');assert.equal(document.activeElement,literal);
+    assert.equal(isPromptController({textarea:area('prompt'),node:{type:'Note'}}),false);
+  } finally {delete globalThis.document;delete globalThis.MutationObserver;delete globalThis.window;}
+});
 test('minimal replacement maps positions before and after the edit',()=>{
   const edit=replacementEdit('a,,  b','a, b');
   assert.equal('a,,  b'.slice(0,edit.start)+edit.replacement+'a,,  b'.slice(edit.end),'a, b');
@@ -73,12 +96,27 @@ test('unchanged input creates no edit or focus change',()=>{
   assert.equal(applyFormat(area,{}),false);
 });
 test('unsupported native editing preserves text and selection',()=>{
-  const area={value:'a,, b',selectionStart:5,selectionEnd:5,focus(){},setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;}};
+  const area={value:'a,, b',selectionStart:5,selectionEnd:5,focus(){document.activeElement=this;},setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;}};
   globalThis.document={execCommand(){return false;}};
   try {
     assert.throws(()=>applyFormat(area,{}),/undoable/);
     assert.equal(area.value,'a,, b');assert.equal(area.selectionStart,5);assert.equal(area.selectionEnd,5);
   } finally {delete globalThis.document;}
+});
+
+test('a field that cannot take focus never edits the previously focused prompt',()=>{
+  const visible={value:'my actual prompt'},hidden={value:'old,hidden,phrase',selectionStart:0,selectionEnd:0,focus(){},setSelectionRange(){throw Error('hidden selection must not change');}};
+  globalThis.document={activeElement:visible,execCommand(){throw Error('must not edit the visible prompt');}};
+  try{assert.equal(applyFormat(hidden,{}),false);assert.equal(visible.value,'my actual prompt');assert.equal(hidden.value,'old,hidden,phrase');}
+  finally{delete globalThis.document;}
+});
+
+test('formatting uses the input owner document for iframe editing',()=>{
+  const events=[],doc={execCommand(_cmd,_ui,text){const el=this.activeElement;el.value=el.value.slice(0,el.selectionStart)+text+el.value.slice(el.selectionEnd);return true;}};
+  const area={ownerDocument:doc,value:'a,, b',selectionStart:5,selectionEnd:5,focus(){doc.activeElement=this;},setSelectionRange(a,b){this.selectionStart=a;this.selectionEnd=b;},dispatchEvent(e){events.push(e.type);}};
+  globalThis.document={execCommand(){throw Error('wrong document');}};
+  try{assert.equal(applyFormat(area,{}),true);assert.equal(area.value,'a, b');assert.deepEqual(events,['change']);}
+  finally{delete globalThis.document;}
 });
 
 test('formatter blocks IME and stale inputs, honors scope, and registers Settings',()=>{
@@ -193,4 +231,32 @@ test('visible classic action group remains supported',()=>{
   globalThis.MutationObserver=class{observe(){}};globalThis.window={addEventListener(){}};
   try {assert.equal(mountFormatButton({menu:{actionsGroup:{element:actions}}},()=>{}).previousElementSibling,actions);}
   finally {for(const key of ['document','MutationObserver','window'])delete globalThis[key];}
+});
+
+
+test('format Settings and toolbar update Japanese help on locale changes', () => {
+  const events = new EventTarget(), definitions = new Map();
+  let locale='ja';
+  globalThis.document={body:{},createElement(){return new ButtonElement();},querySelector(){return null;},addEventListener(){}};
+  globalThis.MutationObserver=class{observe(){}};globalThis.window={addEventListener(){}};
+  const app={ui:{settings:Object.assign(events,{getSettingValue:id=>id==='Comfy.Locale'?locale:undefined,addSetting:def=>definitions.set(def.id,def)})}};
+  try {
+    installFormatting(app,{getControllers:()=>[],begin(){},end(){}});
+    assert.equal(definitions.size,5);
+    for(const def of definitions.values()) {
+      assert.match(def.name,/[ぁ-んァ-ン一-龯]/,def.id);
+      assert.match(def.tooltip,/[ぁ-んァ-ン一-龯]/,def.id);
+    }
+    const format=definitions.get('DanbooruTagJPAssist.FormatNow').type();
+    assert.equal(format.textContent,'整形');
+    const scope=definitions.get('DanbooruTagJPAssist.FormatScope');
+    const originalValues=scope.options.map(o=>o.value);
+    locale='en';events.dispatchEvent(new Event('Comfy.Locale.change'));
+    assert.equal(format.textContent,'Format');
+    assert.equal(scope.name,'Format target');assert.match(scope.tooltip,/All:/);
+    assert.deepEqual(scope.options.map(o=>o.value),originalValues);
+    locale='ja';events.dispatchEvent(new Event('Comfy.Locale.change'));
+    assert.equal(format.textContent,'整形');assert.equal(scope.name,'整形する対象');
+    assert.match(scope.options[2].text,/すべて/);
+  } finally {for(const key of ['document','MutationObserver','window'])delete globalThis[key];}
 });

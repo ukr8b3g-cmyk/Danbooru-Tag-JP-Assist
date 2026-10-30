@@ -1,16 +1,16 @@
+import { addLocalizedSetting, onLocaleChange, uiText } from './settings_i18n.js';
 import { formatPrompt, formatSelection, replacementEdit } from './prompt_format.js';
 
 function addFormatTooltip(button, app) {
   const update = () => {
-    const locale = app.ui?.settings?.getSettingValue?.('Comfy.Locale')
-      ?? app.extensionManager?.setting?.get?.('Comfy.Locale')
-      ?? document.documentElement?.lang ?? 'en';
     // Use the browser tooltip so no floating panel remains after leaving the button.
-    button.title = /^ja(?:-|$)/i.test(locale)
-      ? 'プロンプトのカンマ・空白を整えます。対象・追加処理は設定に従います。'
-      : 'Clean up prompt commas and spacing, using the configured target and options.';
+    button.textContent = uiText(app, 'Format', '整形');
+    button.title = uiText(app, 'Clean up prompt commas and spacing, using the configured target and options.',
+      'プロンプトのカンマ・空白を整えます。対象・追加処理は設定に従います。');
+    button.setAttribute('aria-label', uiText(app, 'JP Assist Format', 'JP Assist プロンプトを整形'));
   };
   update();
+  onLocaleChange(app, () => {if (button.isConnected) update();});
   button.addEventListener('mouseenter', update);
   button.addEventListener('focus', update);
 }
@@ -18,6 +18,9 @@ function addFormatTooltip(button, app) {
 export function isPromptController({node, textarea}) {
   const type = String(node?.comfyClass ?? node?.type ?? '');
   if (/json|script|codeeditor|codeinput|template|markdown|note/i.test(type)) return false;
+  // Custom prompt UIs opt in per field; literal lettering is never batch edited.
+  const format = textarea.dataset?.jpAssistFormat;
+  if (format === 'prompt' || format === 'literal') return format === 'prompt';
   const widget = node?.widgets?.find(w => w.inputEl === textarea || w.element === textarea || w.element?.contains?.(textarea));
   if (type === 'DanbooruTagJPAssist') return widget?.name === 'text';
   return /CLIPTextEncode|TextEncode|Prompt|String|TextInput|Primitive/i.test(type)
@@ -32,7 +35,10 @@ export function applyFormat(textarea, options, selectionOnly = false) {
   const edit = replacementEdit(original, next);
   const scrollTop = textarea.scrollTop, scrollLeft = textarea.scrollLeft;
   const direction = textarea.selectionDirection;
+  const document = textarea.ownerDocument ?? globalThis.document;
   textarea.focus({preventScroll: true});
+  // Hidden/collapsed inputs cannot take focus; execCommand would edit another field.
+  if (document.activeElement !== textarea) return false;
   textarea.setSelectionRange(edit.start, edit.end);
   try {
     // Native editing preserves the browser's per-input Undo/Redo history.
@@ -83,16 +89,16 @@ export function installFormatting(app, {getControllers, begin, end}) {
     return changed;
   }
 
-  app.ui.settings.addSetting({id: prefix + 'Scope', name: 'Format target', type: 'combo',
+  addLocalizedSetting(app, {id: prefix + 'Scope', name: 'Format target', type: 'combo',
     category: ['Danbooru Tag JP Assist', 'Formatting', 'Target'], defaultValue: 'all',
     options: [{value: 'current', text: 'Current input / selection'}, {value: 'selected', text: 'Selected nodes'},
       {value: 'all', text: 'All recognized prompt inputs'}]});
   for (const [key, name] of [['Duplicates','Remove duplicate plain tags'], ['Underscores','Replace underscores'], ['AppendComma','Append comma on newline']]) {
-    app.ui.settings.addSetting({id: prefix + key, name, type: 'boolean', defaultValue: false,
+    addLocalizedSetting(app, {id: prefix + key, name, type: 'boolean', defaultValue: false,
       category: ['Danbooru Tag JP Assist', 'Formatting', name]});
   }
   // Also expose the action in Settings if the main menu is hidden.
-  app.ui.settings.addSetting({id: prefix + 'Now', name: 'Format', category: ['Danbooru Tag JP Assist','Formatting','Format'],
+  addLocalizedSetting(app, {id: prefix + 'Now', name: 'Format', category: ['Danbooru Tag JP Assist','Formatting','Format'],
     type: () => {const button = document.createElement('button'); button.textContent = 'Format'; addFormatTooltip(button, app); button.onclick = run; return button;}});
   document.addEventListener('keydown', e => {
     if (e.altKey && e.shiftKey && !e.ctrlKey && !e.metaKey && e.code === 'KeyF'
@@ -108,7 +114,6 @@ export function mountFormatButton(app, run) {
   const button = document.createElement('button');
   button.id = 'jp-assist-format'; button.textContent = 'Format';
   addFormatTooltip(button, app);
-  button.setAttribute('aria-label', 'JP Assist Format');
   button.className = 'comfyui-button';
   button.style.cssText = 'padding:6px 10px;white-space:nowrap;flex-shrink:0';
   button.addEventListener('mousedown', e => {e.preventDefault(); e.stopPropagation();});

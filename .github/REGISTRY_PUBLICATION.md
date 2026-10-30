@@ -12,6 +12,12 @@ the Registry publisher. It does not rely on a GITHUB_TOKEN-created Release
 triggering another workflow. Normal configuration pushes run offline checks
 only; they never create a Release or publish a Registry package.
 
+Completed version-specific one-time workflows are kept in Git history only.
+For a new version, explicitly approve and create its stable tag at the verified
+source commit after both required CI workflows pass for that same SHA. Then run
+the existing Release workflow with that tag; do not add another version-specific
+push workflow. Existing tags, Releases and Registry versions must not be overwritten.
+
 For an already published stable Release, select the publisher workflow on
 main and enter its exact release_tag to resume manually. Every existing Registry
 version stops publication for inspection. Pending emits a warning and summary;

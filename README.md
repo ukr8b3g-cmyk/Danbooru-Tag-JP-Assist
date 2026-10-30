@@ -1,5 +1,70 @@
 # Danbooru Tag JP Assist
 
+## What’s New — v0.5.0（2026-10-30）
+
+- **500件の候補を維持して検索・描画を軽量化**。検索データを再利用し、候補は画面付近だけを描画します。追加設定は不要です。
+- ComfyUI_testのChrome実画面で、500件目までのスクロール・スクロールバー操作・マウス／キー確定・フォーカス維持・Undo／Redo・連続入力・Escapeを確認しました。
+- 日本語Settingsと日英ヘルプ、タグ／翻訳CSVの優先順チェックリスト、初期OFFの「よく使う候補を優先する」を含みます。保存済みの設定と従来モードは保持します。
+- Hugging FaceからのCSV取得を廃止。`danbooru_2025.csv`はダウンロードしません。辞書を更新する場合はCSVを手動で配置します。
+
+初回の辞書準備には時間がかかります。447,638件の辞書を使うCPU比較では、件数順のblue検索が約404ms→21ms、500件の隔離描画が約13.2ms→1.2msでした。実ComfyUIへの補助HTTP測定は初回約7秒、再利用時約35〜38msです。これらは入力から描画までの遅延を保証する数値ではありません。[検証と更新方法](docs/RELEASE_v0.5.0.md)
+
+## 補完の軽量化（v0.5.0）
+
+追加設定は不要です。500件の候補、CSV優先順、各並び順、日本語・別名検索、CSVごとの挿入方法、使用頻度優先を維持します。検索用の並び順・文字列データを辞書読み込み時にメモリーへ準備し、再検索時の走査・並べ替えを減らします。初回は辞書解析に加えてこの準備時間がかかり、辞書の再読み込みで作り直します。ディスク上の検索DBや追加ライブラリは不要です。
+
+候補一覧は画面内とその周辺の行だけを描画します。最大500件すべてをホイール・スクロールバー・上下キーで選べます。タグ・日本語・出典などの表示、候補一覧の高さ変更、フォーカス・Undo、IMEと古い候補の保護は維持します。検索開始までの80ms待機と辞書更新確認も変更しません。Settingsやワークフローの移行操作はありません。
+
+この変更は次回のComfyUI起動とブラウザー再読み込みで有効になります。自動の再起動・再読み込みは行いません。
+
+**Autocomplete performance (v0.5.0):** No new settings. An in-memory dictionary index reuses rank orders, prefix matches and substring-search data; first-load preparation is additional work, and dictionary reload rebuilds it. Candidate rendering keeps only visible rows and a small surrounding window in the DOM while preserving all 500 choices, native scrolling, arrow navigation and popup resizing. CSV priority, sorting, Japanese/alias matching, insertion modes, personal usage ranking, focus, Undo and IME/stale-result guards remain unchanged. The 80 ms debounce and dictionary revision checks remain in place. No new dependencies, search DB files, settings migration or workflow fields. Activate on your next ComfyUI start and browser reload; this update does not restart or reload the app automatically.
+
+
+## CSV設定の整理と使用頻度（v0.5.0）
+
+- **CSVファイル → 使用するタグCSV／使用する翻訳CSV（優先順）**：それぞれ別に選び、↑／↓で順序を変更します。「すべて選択」は現在の順序を保って残りを末尾に追加し、「選択解除」は空選択を保持します。選択したCSV以外には検索しません。新しいCSVを後で追加しても自動では選択しません。
+- **従来のCSV設定**：以前の取得元・単一CSV指定・選択モードを折りたたみ欄へ移動しました。普段は開く必要がありません。保存済みの従来モードはそのまま動き、チェックリストには「使われていません」と表示します。「選択したCSVを使う」でチェックリストへ戻せます。タグと翻訳は独立して切り替えられ、従来の選択値も消しません。
+- **補完 → よく使う候補を優先する**：初期OFF。ON中にEnter／Tab／クリックで確定した候補だけ、1回につき1を加算します。検索・カーソル移動・Escape・IME変換の確定だけでは加算しません。CSVの優先順を先に評価し、同じ優先グループ内では使用回数の多い候補を先に表示します。同回数なら既存の並び順を使います。表示上限より前に適用するため、通常は20件や500件に入らない候補も、使用回数が多ければ上位になります。
+- 日本語訳や別名から選んでも元の候補へ加算します。別CSV・別の辞書種別・分類体系・挿入モードの同名候補は別の履歴です。未選択のCSVを履歴から検索対象へ戻すことはありません。タグの投稿数は変更しません。
+- 履歴は**ブラウザーのローカルストレージ・ComfyUIの接続先ごと**に保存します。同じブラウザープロファイルと接続先を使うComfyUIユーザー間では共有します。記録対象は直近に使った最大2,000候補の識別情報と確定回数で、プロンプト全文・検索語は保存しません。順位付けのため同じComfyUIサーバーに履歴を渡しますが、サーバーのCSVやワークフローには保存しません。保存できないブラウザーでは開いている画面内だけ記録を維持します。
+- **使用履歴を消去**はこの履歴だけを消します。機能をOFFにすると記録・順位への反映を停止し、既存の履歴は残します。Undoは入力を戻しますが、確定操作の回数は減らしません。正／負プロンプトの回数は共通で、Forgeの履歴や減衰・対数補正設定は移行しません。
+- **候補を最大500件表示**をONにすると、表示件数が20でも最大500件を表示します。20件に制限する場合はOFFにして表示件数を20にします。これは検索に一致した総件数を表示する設定ではありません。
+
+日英の項目名・選択肢・マウスオーバー説明を用意し、日本語以外のUIは英語になります。Settings整理は次回のブラウザー再読み込みで反映されます。新しい使用頻度の順位付けは、更新したPythonコードを次回ComfyUI起動時に読み込んでから有効です。旧サーバーでは通常補完を維持し、Settingsに未反映の説明を表示します。更新作業では再起動しません。
+
+## Settingsの日本語表示とヘルプ（v0.5.0）
+
+ComfyUIの言語（Locale）を日本語にすると、**Settings → Danbooru Tag JP Assist**の項目名・グループ名・選択肢・ヘルプが日本語になります。英語および日本語以外は英語で表示します。言語を切り替えると表示も更新し、CSVの選択・優先順・保存値は変更しません。各項目のヘルプ表示にマウスを重ねると説明が出ます。CSVのチェック欄・↑／↓・再読み込み・整形ボタンにも説明があります。
+
+| 設定 | 使い方 |
+|---|---|
+| 検索する入力範囲 | 「単語」はスペースやカンマの後を検索。「タグ」はカンマ区切りのタグ全体を検索。 |
+| 候補の挿入方法：従来のタグ挿入（Existing） | すべての候補を従来のタグ挿入規則で扱い、カンマ・アンダースコアの設定に従います。 |
+| 候補の挿入方法：CSVごとの挿入方法（CSV-aware） | CSVの`insert_mode`に従います。tag／phraseはカンマ設定、wordは空白のみ、rawは原文どおり。自然言語でカンマを付けたくない場合はwordを指定します。 |
+| タグ／翻訳CSVの選択方法 | 「選択したCSVのみ」でチェックしたファイルだけ使用し、↑／↓で優先順を変更。空の選択は候補なし／翻訳なしです。 |
+| 候補を最大500件表示 | ONは最大500件。OFFなら指定した「候補の表示件数」を使います。検索結果の総件数ではありません。 |
+
+**辞書更新方針**：初回のタグ辞書は`tags_merged_dedup.csv`を選びます（保存済みの設定は維持）。`danbooru_2025.csv`は配布もダウンロードもしません。Hugging FaceからのCSV取得全体を廃止し、既存の更新ON設定や古い画面からの更新API呼び出しでもファイルを取得しません。新しい辞書は手動でCSVフォルダーへ置き、**辞書を再読み込み**で反映します。保存済みの選択リストには新CSVを自動追加しません。
+
+反映方法：更新後、ワークフローを保存してブラウザーを再読み込みすると新しいSettingsを読み込みます。Python側の旧更新APIを無効化する変更は、次回のComfyUI再起動で有効になります。旧サーバーを再起動せずに使用している間は、旧APIの実装がメモリー上に残ります。通常の新UIはそのAPIを呼びません。
+
+### Forge Neo版との違い
+
+両版で同じCSVを選んでも、以下の実装差があります。Forge側の設定をComfyUIへ自動移行する機能はありません。
+
+| 項目 | ComfyUI JP Assist | Forge Neo TagComplete |
+|---|---|---|
+| 挿入モード | 従来のタグ挿入が初期値。CSV指定は明示選択 | CSVのメタデータと辞書種別を利用 |
+| 自然言語CSVのモード省略時 | natural_languageはwordとして扱う | 1語はword、複数語はphraseとして推定 |
+| 検索の正規化 | 小文字化・アンダースコアの空白化 | 加えてUnicode NFKC正規化などを使用 |
+| 検索範囲 | 初期値は単語単位。タグ全体にも切り替え可 | 自然言語の複数語句に対応する置換範囲処理あり |
+| 全件表示 | 1回の検索は最大500件。総ヒット数ヘッダーなし | 検索結果の総件数ヘッダーあり。表示上限はForge側設定に依存 |
+| CSVの配置 | CSV用フォルダー直下 | サブフォルダーも走査 |
+| LoRA・Embedding・ワイルドカード実行 | Forge専用機能は移植していません | Forge側の機能・設定を使用 |
+
+自然言語の挿入規則を近づけるには、同じCSVに`source_type`と`insert_mode`を明示し、ComfyUIでは「CSVごとの挿入方法」を選び、両版のCSV選択順とカンマ設定を合わせます。ただし複数語の置換範囲は別です。例えば`soft nat`から`soft natural lighting`を選ぶと、ComfyUIの単語単位では前の`soft`を保持して`soft soft natural lighting`となり、Neoは一致する接頭語句全体を置換します。これは今回のUI翻訳では変更していません。上表はソース比較結果です。実稼働する両アプリでの同時比較・日本語IMEの実入力テストは未実施です。
+
+
 ## 候補ボックスの高さ変更 / Resize suggestions
 
 候補の下端をドラッグして高さを変更できます。文字の上側に表示される場合は上端を操作します。高さは保存され、Settings → Danbooru Tag JP Assist → Display → Suggestion popup height (px)でも変更できます（初期240px）。画面の空きスペースに合わせて一時的に縮めます。保存済みのCSV選択は維持し、新規タグ選択はtags_merged_dedup.csvのみです。
@@ -56,7 +121,7 @@ Danbooru Tag JP Assist は、ComfyUI ノードの複数行テキスト入力欄�
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- バージョン: `0.4.2`
+- バージョン: `0.5.0`
 - ComfyUI の Python 環境で動作します。`server` と `aiohttp` は ComfyUI 側の環境を使用するため、追加の pip 依存は宣言していません。
 - 配布には本体 Python、`web/`、下記の同梱タグ6件・翻訳3件のCSV、README、LICENSE、THIRD_PARTY_NOTICES を含めます。`.comfyignore` は実行時ダウンロード、取得メタデータ、一時ファイル、利用者が追加したデータを除外します。公開準備は利用者データのないクリーンな checkout で行ってください。
 - MIT はソースコードに適用され、第三者データの利用条件を置き換えません。[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) を参照してください。
@@ -90,7 +155,7 @@ git reset --hard origin/main
 
 ## v0.2.1 — 辞書更新の安全性とパフォーマンス改善（2026-10-19）
 
-- Hugging Face辞書の更新要求を直列化し、ダウンロード・メタデータ更新の一時ファイルを要求ごとに分離します。ダウンロードしたCSVは全行を厳密に検証し、異常があれば正常な辞書を上書きしません。
+- Hugging Faceからの取得は現在廃止されています。旧版のダウンロード保護処理も、ローカル辞書のみを使う仕組みに置き換えました。
 - 破損したCSVは候補から除外し、エラーと正常な候補を辞書選択ごとに保持します。同じファイル状態の繰り返し検索では正常なCSVを再解析せず、ファイル変更や「Reload dictionaries」で再試行します。保持する不完全選択のキャッシュは最大2件です。
 - Reload時のファイル読込ロック待ちはComfyUIのイベントループからワーカースレッドへ移しました。
 - 候補の色・表示項目のみの変更では検索キャッシュを消去せず、表示中の候補を再描画します。遅延DOM Widgetの検出はフレーム単位にまとめ、通常のノード生成時の検出は維持します。
@@ -108,13 +173,13 @@ git reset --hard origin/main
 - Danbooruタグ、自然言語辞書、自分のCSVを併用できます。
 - 個別の `Tag file (priority)` を選ぶと、そのCSVの一致候補を最優先し、足りない分だけ `Tag source` で有効な他ファイルから補完します。
 - 候補挿入時に既存の改行・空行・インデント・前後スペースを保持できます。
-- Hugging Face の Danbooru CSV を起動時に確認し、更新があればローカルの `danbooru_tags.csv` を更新できます。
+- 辞書はローカルCSVのみを使用します。起動時・辞書再読み込み時にHugging Faceへの確認やダウンロードは行いません。
 - 検索はサーバー側で行い、必要な候補だけをブラウザへ返します。
 - 入力検索は80msデバウンスされ、候補の上下移動ではリスト全体を再描画しません。
 
-`All` は複数のタグファイルや翻訳ファイルをまとめて使う簡単なモードです。個別ファイルを選んだ場合は「そのファイルだけ」に限定せず、選択ファイルを優先しつつ他の有効なソースをフォールバックとして利用します。
+従来モードの`All`は複数のタグファイルや翻訳ファイルをまとめて使います。従来モードでタグCSVを個別指定した場合は「そのファイルだけ」に限定せず、選択ファイルを優先しつつ他の有効なソースをフォールバックとして利用します。
 
-Hugging Face がオフライン、または元ファイルが消えている場合は、既存のローカルCSVをそのまま使います。
+ネットワーク接続は不要です。既存のローカルCSVをそのまま使用します。
 
 ## 基本的な使い方
 
@@ -132,7 +197,7 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 - `Tag file (priority): All` は `tags/tag_files/` 内の同梱CSVと、ローカルにある Danbooru CSV をまとめて検索します。
 - 個別の `Tag file (priority)` を選ぶと、そのファイルの一致候補が先に並び、候補上限に余りがある場合は `Tag source` で有効な他ファイルから補完します。
 - `Translation file: All` は同梱の翻訳CSVをまとめて読みます。
-- `Tag source: Both` はローカルファイルと Hugging Face 由来の Danbooru CSV を併用します。
+- 従来モードの「両方のローカルCSV」は、保存済みの`danbooru_tags.csv`とその他のローカルCSVを併用します。ダウンロードはしません。
 - 同じタグが選択中の優先ファイルと他ファイルの両方にある場合は、優先ファイル側の行を採用します。優先ファイルを指定していない `All` では、従来どおり後から読み込まれる Danbooru CSV 側が重複時に優先されます。
 - `natural_language_tags.csv` は軽量な英語辞書・プロンプト語彙です。Danbooruタグの代替ではありません。
 - `merged_translations_dedup.csv` は Danbooru タグ用の日本語別名です。
@@ -187,7 +252,7 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 
 - `tags/tag_files/anima_artists.csv`
 - `tags/tag_files/anima_characters.csv`
-- `tags/tag_files/danbooru_2025.csv`
+- `tags/tag_files/tags_merged_dedup.csv`
 - `tags/tag_files/e621.csv`
 - `tags/tag_files/moss_image_natural_language.csv`: MOSS向け自然言語語句 / natural-language phrases
 - `tags/tag_files/natural_language_tags.csv`: 軽量な英語辞書・プロンプト語彙
@@ -200,7 +265,7 @@ Hugging Face がオフライン、または元ファイルが消えている場�
 
 同梱しないファイル:
 
-- `tags/tag_files/danbooru_tags.csv`: Hugging Face から実行時に取得します。Gitには含めません。
+- `tags/tag_files/danbooru_tags.csv`: 既存ファイルがあれば使用できます。自動取得はしません。
 
 ## CSV形式
 
@@ -248,22 +313,22 @@ long_hair,"長髪,ロングヘア","長髪,ロングヘア,髪が長い"
 
 ## 主な設定
 
-タグ・翻訳の各 `Selection mode` の初期値は `Selected CSVs only` です。チェックしたCSVだけを選択順に使用します。↑ / ↓ で優先順位を変更できます。空の選択は候補・翻訳なしです。旧 `Tag source` / `Tag file (priority)` / `Translation file` は表示を維持しますが、選択モードでは対応する旧設定を使用しません。
+タグ・翻訳の各 `Selection mode` の初期値は `Selected CSVs only` です。チェックしたCSVだけを選択順に使用します。↑ / ↓ で優先順位を変更できます。空の選択は候補・翻訳なしです。旧 `Tag source` / `Tag file (priority)` / `Translation file` は「従来のCSV設定」に保持しますが、選択モードでは対応する旧設定を使用しません。
 
 - `Tag file (priority)`: `tags/tag_files/` 内の1ファイル、または `All`。初期値は `All` です。個別ファイルを選ぶと、そのファイルの一致候補を優先し、候補が足りない場合は `Tag source` で有効な他ファイルから補完します。
 - `Translation file`: `tags/translation_files/` 内の1ファイル、または `All`。
-- `Update Danbooru CSV from Hugging Face`: Hugging Face 側を確認し、変更があれば `danbooru_tags.csv` を更新します。
-- `List every match`: 候補を多めに表示します。上限は500件です。
-- `Suggestion count`: `List every match` がOFFの時の表示数です。
+- Hugging Face更新スイッチは廃止しました。古い`AutoUpdateHf`がONでも無視し、旧更新APIもダウンロードを実行しません。
+- `候補を最大500件表示`: ONでは表示件数の指定を使わず、最大500件を表示します。
+- `候補の表示件数`: 最大500件表示がOFFのときの上限です。検索結果の総件数ではありません。
 - `Sort mode`: `Match first`、`Priority / count`、`Tag A-Z`。
 - `Popup color`: 候補ポップアップの色です。
 - `Use spaces for underscores`: `long_hair` を `long hair` として挿入します。
 - `Append comma`: 候補挿入後にカンマを追加します。
 - `Preserve prompt formatting`: 初期値はONです。候補挿入時に既存の改行・空行・インデント・前後スペースを保持します。OFFでは従来の自動整形動作になります。
 
-入力検索は80msデバウンスされ、候補の上下移動ではリスト全体を再描画しません。Hugging Face のCSV更新確認もUI初期化をブロックせずバックグラウンドで実行されます。
+入力検索は80msデバウンスされ、候補の上下移動ではリスト全体を再描画しません。辞書はローカルCSVだけを読み込みます。
 
-CSVを追加・削除したあと、Settings のリストが更新されない場合は ComfyUI を再起動してください。
+CSVを追加・削除したら、Settingsの「辞書を再読み込み」を押してください。保存済みの選択には新ファイルを自動追加しません。
 
 ## 注意
 
@@ -272,8 +337,6 @@ CSVを追加・削除したあと、Settings のリストが更新されない�
 - 補完対象は ComfyUI ノードに属する複数行テキスト欄です。Settings や一般的なモーダル内の textarea には取り付けません。
 - GitHubリポジトリには `danbooru_tags.csv` を含めません。
 - ダウンロード済みの `danbooru_tags.csv` は、元のファイル名と内容を維持します。
-- Hugging Face からの更新は一時ファイルへストリーミング保存し、CSVヘッダーを確認してから置き換えます。
-- Hugging Face から自動取得するCSVには128 MiBの上限を設けています。
 - 自分のタグファイルは `tags/tag_files/` に置いてください。
 - 自分の翻訳・別名ファイルは `tags/translation_files/` に置いてください。
 - `All` で大きなCSVを複数読む場合、初回検索時は単一CSVより読み込みに時間がかかる場合があります。
@@ -294,6 +357,15 @@ Danbooru Tag JP Assist adds tag suggestions to multiline text areas that belong 
 It is intended for users who want to search English Danbooru tags and English prompt vocabulary with optional Japanese aliases.
 
 > **Completion after spaces and commas:** `Completion unit` defaults to **Word (after spaces)**. A saved **Tag (comma separated)** choice is preserved; search Settings for **Completion unit** to change it. This is separate from **Completion behavior / CSV-aware**. If the option is missing, save your workflow and hard-refresh with **Ctrl + F5**.
+
+## What’s New — v0.5.0 (2026-10-30)
+
+- Reuse dictionary search data and render only nearby candidate rows while retaining all 500 choices. No new performance setting is needed.
+- Verified scrolling to candidate 500, scrollbar dragging, mouse/keyboard completion, focus, Undo/Redo, continuous typing and Escape in the running ComfyUI_test Chrome UI.
+- Includes localized Settings/help, ordered tag/translation CSV checklists and opt-in personal usage ranking. Preserve saved settings and legacy CSV modes.
+- Remove Hugging Face CSV downloads, including `danbooru_2025.csv`; place updated dictionaries in the CSV folders manually.
+
+Initial dictionary preparation still takes time. CPU and isolated-render benchmarks are separate from live input latency; see [validation and upgrade notes](docs/RELEASE_v0.5.0.md). Save your work and activate the update on your next planned ComfyUI start and browser reload. This update does not restart the app automatically.
 
 ## What’s New — v0.4.2 (2026-10-24)
 
@@ -335,7 +407,7 @@ Stable versions are available from [GitHub Releases](https://github.com/ukr8b3g-
 
 - Node ID: `danbooru-tag-jp-assist`
 - Publisher ID: `ukr8b3g-cmyk`
-- Version: `0.4.2`
+- Version: `0.5.0`
 - Runs inside ComfyUI's Python environment. ComfyUI supplies `server` and `aiohttp`, so no additional pip dependencies are declared.
 - The distribution includes the Python implementation, `web/`, the six bundled tag CSVs and three translation CSVs listed below, README, LICENSE, and THIRD_PARTY_NOTICES. `.comfyignore` excludes runtime downloads, download metadata, temporary files, and user-added data. Prepare any publication from a clean checkout without user data.
 - MIT applies to the source code and does not replace third-party data terms. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
@@ -374,16 +446,16 @@ Restart ComfyUI and hard refresh the browser with `Ctrl + F5`.
 - Can display Japanese aliases next to suggestions.
 - Can insert spaces instead of underscores for Krea-style natural prompts.
 - Supports sorting by match, priority/count, or tag name.
-- Supports local tag files, Hugging Face tag files, or both.
+- Uses local CSV dictionaries only, including previously saved dictionaries.
 - Selecting a specific `Tag file (priority)` prioritizes matches from that CSV and fills any remaining slots from other sources enabled by `Tag source`.
 - Can preserve existing line breaks, blank lines, indentation, and surrounding spaces when inserting a suggestion.
-- Can check the Hugging Face source at startup and download/update the local `danbooru_tags.csv` when the remote file changes.
+- Never checks or downloads a CSV from Hugging Face at startup or when reloading dictionaries.
 - Performs matching on the server and sends only the requested suggestions to the browser.
 - Debounces input searches by 80 ms and updates keyboard selection without rebuilding the full suggestion list.
 
 `All` is the simplest combined mode. Selecting a specific file no longer acts as a hard single-file filter: the selected file is treated as the priority source and other enabled sources remain available as fallback.
 
-If Hugging Face is offline or the source file disappears, the node keeps using the local saved CSV.
+No network connection is required. Existing local CSV files remain usable.
 
 ## Basic Use
 
@@ -401,7 +473,7 @@ Behavior in the legacy `All / single priority` / `All / single file` modes:
 - `Tag file (priority): All` searches bundled CSV files under `tags/tag_files/` plus the local Danbooru CSV when available.
 - Selecting a specific `Tag file (priority)` puts matches from that file first, then fills unused result slots from other files enabled by `Tag source`.
 - `Translation file: All` loads the bundled translation CSV files together.
-- `Tag source: Both` uses local files and the Hugging Face Danbooru CSV together.
+- In legacy mode, Both local sources uses a saved `danbooru_tags.csv` plus other local CSVs; it does not download anything.
 - If a tag exists in both the selected priority file and fallback files, the selected file wins. With `All` and no explicit priority file, the later-loaded Danbooru CSV keeps the existing duplicate-resolution behavior.
 - `natural_language_tags.csv` is a lightweight English dictionary and prompt vocabulary, not a Danbooru tag replacement.
 - `merged_translations_dedup.csv` is for Danbooru tag Japanese aliases.
@@ -419,7 +491,7 @@ Currently bundled tag files:
 
 - `tags/tag_files/anima_artists.csv`
 - `tags/tag_files/anima_characters.csv`
-- `tags/tag_files/danbooru_2025.csv`
+- `tags/tag_files/tags_merged_dedup.csv`
 - `tags/tag_files/e621.csv`
 - `tags/tag_files/moss_image_natural_language.csv`: MOSS向け自然言語語句 / natural-language phrases
 - `tags/tag_files/natural_language_tags.csv`: lightweight English dictionary and prompt vocabulary
@@ -432,7 +504,7 @@ Bundled translation files:
 
 Not bundled:
 
-- `tags/tag_files/danbooru_tags.csv`: downloaded from Hugging Face at runtime.
+- `tags/tag_files/danbooru_tags.csv`: existing local files remain usable; never downloaded automatically.
 
 ## CSV Format
 
@@ -477,19 +549,19 @@ For example, with `Suggestion count = 20`, if the selected CSV has only 7 matche
 
 - `Tag selection mode` and `Translation selection mode`: both default to `Selected CSVs only`. Saved modes are preserved. The legacy `All / single priority` (`All / single file` for translations) modes remain available.
 - `Selected tag CSVs (ordered)` and `Selected translation CSVs (ordered)`: check files in priority order, then use ↑ / ↓ to reorder. In selected mode only checked files are read. The first selected tag CSV wins duplicate rows and its matches precede later files before `Sort mode`; the first selected translation CSV wins duplicate translations. Empty tag selection gives no suggestions; empty translation selection gives no translations. Missing selections remain visible as unavailable and never fall back to All.
-- In selected mode the tag checklist controls search instead of `Tag source` and `Tag file (priority)`, and the translation checklist controls search instead of `Translation file`. The legacy controls remain visible but are not used in the corresponding selected mode. Switching back restores those existing choices. Settings are global and do not add workflow fields. Restart ComfyUI and reload the browser after updating to enable the new backend behavior.
+- In selected mode the tag checklist controls search instead of `Tag source` and `Tag file (priority)`, and the translation checklist controls search instead of `Translation file`. The legacy controls are grouped in the collapsed **Legacy CSV settings** section; they are disabled in the corresponding selected mode. Switching back restores those existing choices. Settings are global and do not add workflow fields. Restart ComfyUI and reload the browser after updating to enable the new backend behavior.
 - `Tag file (priority)`: one file in `tags/tag_files/` or `All`. The default is `All`. Selecting a file prioritizes matches from that file, then fills remaining suggestions from other files enabled by `Tag source`.
 - `Translation file`: one file in `tags/translation_files/` or `All`.
-- `Update Danbooru CSV from Hugging Face`: checks and updates `danbooru_tags.csv`.
-- `List every match`: shows a larger result list, capped at 500 suggestions.
-- `Suggestion count`: limits displayed suggestions when `List every match` is off.
+- The Hugging Face update switch has been removed. A saved `AutoUpdateHf=true` is ignored; old update API calls cannot download anything.
+- `Show up to 500 candidates`: ON displays up to 500 matches; OFF uses the configured candidate limit (1–200). This is not a total-hit count.
+- `Candidate limit (when expanded list is off)`: limits suggestions when `Show up to 500 candidates` is off.
 - `Sort mode`: `Match first`, `Priority / count`, or `Tag A-Z`.
 - `Popup color`: changes the suggestion popup color.
 - `Use spaces for underscores`: inserts `long hair` instead of `long_hair`.
 - `Append comma`: adds a comma after inserted suggestions.
 - `Preserve prompt formatting`: enabled by default. Keeps existing line breaks, blank lines, indentation, and surrounding spaces when inserting a suggestion. Disable it to use the legacy whitespace-normalizing behavior.
 
-Autocomplete searches are debounced by 80 ms, keyboard navigation no longer rebuilds the full suggestion list, and the Hugging Face CSV refresh check runs without blocking extension UI initialization.
+Autocomplete searches are debounced by 80 ms. Keyboard navigation does not rebuild the candidate list. Dictionaries are read from local CSVs only.
 
 ## Prompt Formatting
 
@@ -520,8 +592,6 @@ Focus and native browser Undo/Redo are preserved; batch edits are undone **per i
 - Autocomplete is attached to multiline text areas owned by ComfyUI nodes, not general Settings or modal text areas.
 - The GitHub repository does not include `danbooru_tags.csv`.
 - The downloaded `danbooru_tags.csv` keeps the original filename and original content.
-- Hugging Face updates are streamed into a temporary file and the CSV header is validated before replacement.
-- Automatically downloaded CSV files are limited to 128 MiB.
 - User tag files should be placed under `tags/tag_files/`.
 - Japanese translation or alias files should be placed under `tags/translation_files/`.
 - Large `All` combinations may take longer on the first search than choosing a single CSV.
@@ -532,3 +602,27 @@ Focus and native browser Undo/Redo are preserved; batch edits are undone **per i
 The source code is released under the [MIT License](LICENSE).
 
 Bundled tag and translation data may include modified third-party data. See [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) for source attribution and usage terms.
+
+## Settings language, help and local dictionary policy
+
+Local MOSS BBOX integration (unreleased): custom Scene/Background and Character/Object color/ID prompt fields participate in All and Selected formatting with the matching MOSS update. Literal Text wording stays out of batch formatting. Choose **Current input / selection**, focus a field and press **Format** to explicitly format lettering, appearance notes or a selection. Nothing is formatted on blur or tab changes. This uses explicit `data-jp-assist-format="prompt"` / `"literal"` field markers; unmarked custom controls keep the existing recognition rules.
+
+Settings labels, choices, groups and hover help follow **Comfy.Locale**: Japanese for `ja`, English for every other locale. Switching language updates presentation without changing stored IDs, values, CSV choices or order. Hover over a setting's help indicator or the CSV checkbox, order arrow, reload or Format button for instructions.
+
+**Existing** applies the legacy tag insertion rules. **CSV-aware** follows `insert_mode`: tag/phrase use the comma preference, word uses spaces, raw inserts the original text. This is separate from Completion unit (searching a word after spaces versus a comma-separated tag).
+
+New tag selections prefer `tags_merged_dedup.csv`; saved choices remain intact. The retired `danbooru_2025.csv` is neither bundled nor downloaded. All Hugging Face CSV checking/downloading is removed, even with an old saved `AutoUpdateHf=true` or calls from an old browser client. Existing local files remain usable. Add new CSVs manually and use **Reload dictionaries**, then select the files explicitly.
+
+ComfyUI and Forge Neo still differ: ComfyUI defaults to legacy insertion; unspecified natural-language modes use word, while Neo infers phrase for multi-word entries. Neo also uses NFKC search normalization, recursively scans dictionary folders and shows a total-hit header. ComfyUI limits a search to 500 candidates and has no total-hit header. Forge-specific LoRA/Embedding/wildcard execution is not ported. To bring separator rules closer, specify `source_type` / `insert_mode` explicitly and match CSV order and comma preferences. The replacement range still differs: completing `soft nat` to `soft natural lighting` in ComfyUI Word mode retains the first `soft`, producing `soft soft natural lighting`; Neo replaces the matching phrase prefix. This UI update does not change that behavior. These are source-level comparisons, not a live side-by-side or physical IME verification.
+
+After an update, save your workflow and reload the browser for the translated Settings. The Python change that disables legacy update API calls requires the next ComfyUI restart; an already running old server retains its previous API implementation until then. The new UI never calls that endpoint.
+
+### CSV controls and personal usage ranking (v0.5.0)
+
+Use the separate ordered tag and translation checklists under **Files**. **Select all** keeps the current order and appends other available CSVs; **Clear selection** stays empty. New files are not selected automatically. **Legacy CSV settings** groups the old source, single-file and mode controls in a collapsible section. Saved legacy modes still work; inactive checklists say so and offer **Use selected CSVs**. Existing choices are retained.
+
+**Autocomplete → Prioritize frequently used candidates** defaults to OFF. While ON, each successful Enter, Tab or mouse completion adds one use. Searching, Escape, IME confirmation and failed/stale edits do not count. CSV priority remains first, then personal use count, then the selected sort mode for ties. Ranking happens before the 20/500 result limit. Alias/Japanese searches count toward the original candidate, while different source CSVs, source types, category schemes and insertion modes keep separate histories. Unselected dictionaries stay excluded; CSV post counts are unchanged.
+
+History stays in browser local storage for the current ComfyUI origin (shared by ComfyUI users using that same browser profile and address). It retains the most recently used 2,000 candidate identities and completion counts, never full prompts or search queries. Counts are sent to the same ComfyUI server for ranking only; they are not written to CSVs or workflows. If storage is unavailable, history lasts only for the open page. **Clear usage history** erases only these counts. Switching OFF stops recording and ranking but retains history. Undo restores text without subtracting uses; positive and negative prompts share counts. Forge histories, age limits and logarithmic weighting are not imported.
+
+**Show up to 500 candidates** ignores the numeric limit when ON; switch it OFF to use a limit such as 20. It is neither unlimited nor a total-hit counter. Labels, options and hover help follow Japanese UI, with English for other locales. Load the frontend changes on your next browser reload; usage ranking also requires the updated backend on your next ComfyUI start. Until then, normal completion remains available and Settings explains the missing ranking support. This update does not restart ComfyUI.

@@ -40,6 +40,78 @@ class Dictionaries(unittest.TestCase):
         path.write_text(text, encoding='utf-8-sig', newline='')
         return path
 
+    def test_usage_ranks_before_limit_and_preserves_csv_priority(self):
+        self.tags('a.csv', ''.join(f'blue_{i:04d},0,{1000-i},青髪\n' for i in range(600)))
+        self.tags('b.csv', 'blue_other,0,999999,青髪\n')
+        options = dict(tag_files=['a.csv', 'b.csv'], translation_files=[], sort_order='count')
+        rows = backend._read_tag_rows(tag_files=options['tag_files'], translation_files=[])
+        target = next(row for row in rows if row['tag'] == 'blue_0599')
+        other = next(row for row in rows if row['tag'] == 'blue_other')
+        usage = {backend._usage_key(target): 3, backend._usage_key(other): 100}
+        for query in ['blue', '青髪']:
+            hits = backend._search_tag_rows(query, limit=1, usage=usage, **options)
+            self.assertEqual(hits[0]['tag'], target['tag'])
+        self.assertEqual(backend._search_tag_rows('blue', limit=1, **options)[0]['tag'], 'blue_0000')
+        self.assertEqual(backend._search_tag_rows('blue', limit=1, usage={}, **options)[0]['tag'], 'blue_0000')
+        self.assertEqual(backend._search_tag_rows('blue', tag_files=[], usage=usage), [])
+
+    def test_index_matches_exhaustive_search_for_aliases_ties_phrases_and_usage(self):
+        self.tags('a.csv', 'tag,category,count,aliases,source_type,insert_mode\n' + ''.join(
+            f'{"Blue" if i % 2 else "blue"}_{i},0,{i % 4},"髪,azure_{i}",{ "natural_language" if i % 5 == 0 else "tag"},word\n'
+            for i in range(80)))
+        self.tags('b.csv', 'tag,category,count,aliases\nblue_extra,0,999,髪\nxblue,0,0,azure\n')
+        for files in [['a.csv', 'b.csv'], ['b.csv', 'a.csv']]:
+            _, index, _ = backend._load_cached_tag_data(tag_files=files, translation_files=[])
+            usage = {backend._usage_key(index[-1][0]): 7, backend._usage_key(index[9][0]): 4}
+            for query, tail in [('blue', 'blue 1'), ('azure', ''), ('髪', ''), ('1', ''), ('missing', '')]:
+                for mode in ['count', 'match', 'az']:
+                    for japanese in [False, True]:
+                        for history in [None, usage]:
+                            expected = []
+                            for row, tag, aliases, count, priority in index:
+                                needle = backend._normalize(tail if tail and (row['meta']['source_type'] == 'natural_language' or row['meta']['insert_mode'] == 'word') else query)
+                                texts = (tag, *aliases) if japanese else (tag,)
+                                scores = [0 if text == needle else 1 if text.startswith(needle) else 2 for text in texts if needle in text]
+                                if not scores: continue
+                                score = min(scores); name = row['tag'].casefold()
+                                key = (priority, -count, score, name) if mode == 'count' else (priority, name, score, -count) if mode == 'az' else (priority, score, -count, name)
+                                if history: key = (priority, -history.get(backend._usage_key(row), 0), *key[1:])
+                                expected.append((key, row))
+                            expected.sort(key=lambda pair: pair[0])
+                            for limit in [1, 7, 500]:
+                                with self.subTest(files=files, query=query, mode=mode, jp=japanese, usage=bool(history), limit=limit):
+                                    actual = backend._search_tag_rows(query, tail=tail, behavior='csv', tag_files=files,
+                                        translation_files=[], sort_order=mode, search_jp=japanese, usage=history, limit=limit)
+                                    self.assertEqual(actual, [row for _, row in expected[:limit]])
+
+    def test_usage_identity_does_not_leak_between_csvs_and_ties_use_sort_mode(self):
+        self.tags('a.csv', 'blue,0,2,\nblue_other,0,50,\n')
+        self.tags('b.csv', 'blue,0,2,\nblue_other,0,50,\n')
+        a = backend._read_tag_rows(tag_files=['a.csv'], translation_files=[])[0]
+        usage = {backend._usage_key(a): 1}
+        self.assertEqual(backend._search_tag_rows('blue', tag_files=['a.csv'], sort_order='count', usage=usage)[0]['tag'], 'blue')
+        self.assertEqual(backend._search_tag_rows('blue', tag_files=['b.csv'], sort_order='count', usage=usage)[0]['tag'], 'blue_other')
+        for mode in ['match', 'count', 'az']:
+            expected = backend._search_tag_rows('blue', tag_files=['a.csv'], sort_order=mode)
+            equal = {backend._usage_key(row): 4 for row in expected}
+            self.assertEqual(backend._search_tag_rows('blue', tag_files=['a.csv'], sort_order=mode, usage=equal), expected)
+
+    def test_personalized_route_validates_body_and_does_not_pollute_normal_search(self):
+        self.tags('a.csv', 'blue_top,0,999,\nblue_low,0,1,\n')
+        row = backend._read_tag_rows(tag_files=['a.csv'], translation_files=[])[1]
+        async def call(payload):
+            async def body(): return payload
+            return await backend.search_with_usage(types.SimpleNamespace(
+                query={'q': 'blue', 'tag_files': '["a.csv"]', 'limit': '1', 'sort': 'count'}, json=body))
+        key = json.dumps(list(backend._usage_key(row)), ensure_ascii=False, separators=(',', ':'))
+        response = asyncio.run(call({'usage': [[key, 2]]}))
+        self.assertEqual(response.status, 200)
+        self.assertEqual(json.loads(response.text)['tags'][0]['tag'], 'blue_low')
+        self.assertEqual(backend._search_tag_rows('blue', tag_files=['a.csv'], sort_order='count', limit=1)[0]['tag'], 'blue_top')
+        for invalid in [None, {}, {'usage': {}}, {'usage': [[key, True]]}, {'usage': [[key, -1]]},
+                        {'usage': [['not-json', 1]]}, {'usage': [[key, 1]] * 2001}]:
+            self.assertEqual(asyncio.run(call(invalid)).status, 400)
+
     def test_headerless_first_record_and_alias_column(self):
         rows = backend._read_tag_csv(self.tags('e621.csv', 'mammal,5,100,"mammals,ungulate"\nanthro,0,0,word\n'))
         self.assertEqual([r['tag'] for r in rows], ['mammal', 'anthro'])
@@ -269,61 +341,28 @@ class Dictionaries(unittest.TestCase):
         self.assertEqual(result['errors'], ['broken.csv'])
 
 
-    def test_full_download_validation_rejects_late_malformed_row_atomically(self):
-        name = backend.HF_TAG_FILE
-        destination = Path(backend.TAG_FILES_DIR) / name
-        destination.write_bytes(b'tag,count\nold_good,1\n')
-        meta = Path(backend.TAG_FILES_DIR) / '.danbooru_tags_meta.json'
-        meta.write_text('{"etag":"old"}', encoding='utf-8')
-        payload = b'tag,count\nfirst_good,2\nsecond_good,3\n"unterminated\n'
-        with patch.object(backend, 'HF_META_FILE', str(meta)), patch.object(backend.urllib.request, 'urlopen', return_value=io.BytesIO(payload)):
-            with self.assertRaises(csv.Error):
-                backend._download_hf_tag_file({'etag': 'bad'})
-        self.assertEqual(destination.read_bytes(), b'tag,count\nold_good,1\n')
-        self.assertEqual(meta.read_text(encoding='utf-8'), '{"etag":"old"}')
-        self.assertEqual(list(Path(backend.TAG_FILES_DIR).glob('.hf_tags_*.tmp')), [])
-        self.assertEqual(backend._tag_response({'q':'old','tag_files':'["danbooru_tags.csv"]','translation_files':'[]'})['tags'][0]['tag'], 'old_good')
+    def test_retired_remote_update_routes_never_download_or_overwrite_local_files(self):
+        import urllib.request
+        destination = self.tags('danbooru_tags.csv', 'tag,count\nlocal_tag,9\n')
+        original = destination.read_bytes()
+        for handler in [backend.update_danbooru_tag_jp_assist_hf_file, backend.update_legacy_jp_tag_autocomplete_hf_file]:
+            with patch.object(urllib.request, 'urlopen', side_effect=AssertionError('Remote access is prohibited')) as network:
+                response = asyncio.run(handler(types.SimpleNamespace()))
+                payload = json.loads(response.body)
+                self.assertEqual(response.status, 200)
+                self.assertTrue(payload['disabled'])
+                self.assertFalse(payload['updated'])
+                network.assert_not_called()
+            self.assertEqual(destination.read_bytes(), original)
+        self.assertFalse((Path(backend.TAG_FILES_DIR) / 'danbooru_2025.csv').exists())
+        self.assertEqual([r['tag'] for r in backend._read_tag_rows(tag_files=['danbooru_tags.csv'])], ['local_tag'])
 
-    def test_parallel_hf_checks_are_serialized_and_share_one_complete_result(self):
-        destination = Path(backend.TAG_FILES_DIR) / backend.HF_TAG_FILE
-        destination.write_bytes(b'tag,count\nold,1\n')
-        meta_path = Path(backend.TAG_FILES_DIR) / '.danbooru_tags_meta.json'
-        entered = threading.Event()
-        release = threading.Event()
-        calls = []
-        failures = []
-        results = {}
-        data = b'tag,count\nnewer,9\n'
-        def urlopen(*_args, **_kwargs):
-            calls.append('download')
-            entered.set()
-            if not release.wait(3):
-                raise TimeoutError('test coordination failure')
-            return io.BytesIO(data)
-        def run(name):
-            try:
-                results[name] = backend._update_hf_tag_file()
-            except Exception as exc:
-                failures.append(exc)
-        with patch.object(backend, 'HF_META_FILE', str(meta_path)), patch.object(backend, '_hf_remote_meta', return_value={'etag': 'v2'}), patch.object(backend.urllib.request, 'urlopen', side_effect=urlopen):
-            first = threading.Thread(target=run, args=('one',), daemon=True)
-            second = threading.Thread(target=run, args=('two',), daemon=True)
-            first.start()
-            self.assertTrue(entered.wait(3))
-            second.start()
-            time.sleep(.04)
-            release.set()
-            first.join(5)
-            second.join(5)
-        self.assertFalse(first.is_alive() or second.is_alive())
-        self.assertFalse(failures)
-        self.assertTrue(results['one']['updated'])
-        self.assertFalse(results['two']['updated'])
-        self.assertEqual(calls, ['download'])
-        self.assertEqual(destination.read_bytes(), data)
-        self.assertEqual(json.loads(meta_path.read_text())['etag'], 'v2')
-        self.assertEqual(list(Path(backend.TAG_FILES_DIR).glob('.hf_tags_*.tmp')), [])
-        self.assertEqual(list(Path(backend.TAG_FILES_DIR).glob('.hf_meta_*.tmp')), [])
+    def test_missing_remote_dictionary_is_not_advertised_or_created(self):
+        self.tags('tags_merged_dedup.csv', 'tag,count\nmerged,1\n')
+        self.assertNotIn('danbooru_tags.csv', backend._csv_file_names(backend.TAG_FILES_DIR))
+        self.assertEqual(backend._csv_file_names(backend.TAG_FILES_DIR), ['tags_merged_dedup.csv'])
+        asyncio.run(backend.update_danbooru_tag_jp_assist_hf_file(types.SimpleNamespace()))
+        self.assertEqual(backend._csv_file_names(backend.TAG_FILES_DIR), ['tags_merged_dedup.csv'])
 
     def test_broken_csv_cache_does_not_reparse_good_files_and_errors_are_scoped(self):
         self.tags('good.csv', 'tag,count\nvalid,1\n')
@@ -381,17 +420,6 @@ class Dictionaries(unittest.TestCase):
         holder.join(2)
         self.assertLess(elapsed, .12, 'reload blocked the event loop')
 
-    def test_non_object_hf_metadata_is_ignored_and_rewritten(self):
-        dest = Path(backend.TAG_FILES_DIR) / backend.HF_TAG_FILE
-        dest.write_bytes(b'tag,count\nold,1\n')
-        meta = Path(backend.TAG_FILES_DIR) / '.danbooru_tags_meta.json'
-        meta.write_text('[]', encoding='utf-8')
-        with patch.object(backend, 'HF_META_FILE', str(meta)), patch.object(backend, '_hf_remote_meta', return_value={'etag':'fresh'}), patch.object(backend.urllib.request, 'urlopen', return_value=io.BytesIO(b'tag,count\nnew,9\n')):
-            self.assertEqual(backend._load_hf_meta(), {})
-            updated = backend._update_hf_tag_file()
-        self.assertTrue(updated['updated'])
-        self.assertEqual(dest.read_bytes(), b'tag,count\nnew,9\n')
-        self.assertEqual(json.loads(meta.read_text())['etag'], 'fresh')
 
 
 if __name__ == '__main__':

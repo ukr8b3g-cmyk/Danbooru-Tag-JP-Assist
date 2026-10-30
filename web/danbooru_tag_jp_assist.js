@@ -3,11 +3,13 @@ import { inputContext, snapshotMatches, insertionEdit } from "./lib/completion_c
 
 import { installFormatting } from "./lib/format_ui.js";
 import { installPopupResize } from "./lib/caret_popup.js";
+import { addLocalizedSetting, localizedDefinition, uiText, onLocaleChange } from "./lib/settings_i18n.js";
+import { createUsageHistory } from "./lib/usage_history.js";
+import { createCandidateList } from "./lib/candidate_list.js";
 import { installTooltipCleanup } from "./lib/tooltip_cleanup.js";
 
 const API_URLS = ["/danbooru-tag-jp-assist/tags", "/jp-tag-autocomplete-test/tags"];
 const FILES_API_URLS = ["/danbooru-tag-jp-assist/files", "/jp-tag-autocomplete-test/files"];
-const HF_UPDATE_API_URLS = ["/danbooru-tag-jp-assist/hf-update", "/jp-tag-autocomplete-test/hf-update"];
 const EXT_NAME = "Danbooru.Tag.JP.Assist";
 const AUTOCOMPLETE_DEBOUNCE_MS = 80;
 const SETTINGS = {
@@ -21,6 +23,7 @@ const SETTINGS = {
   enabled: "DanbooruTagJPAssist.Enabled",
   maxSuggestions: "DanbooruTagJPAssist.MaxSuggestions",
   showAll: "DanbooruTagJPAssist.ShowAll",
+  usageRanking: "DanbooruTagJPAssist.UsageRanking",
   autoComma: "DanbooruTagJPAssist.AutoComma",
   preserveFormatting: "DanbooruTagJPAssist.PreservePromptFormatting",
   showJapanese: "DanbooruTagJPAssist.ShowJapanese",
@@ -35,7 +38,6 @@ const SETTINGS = {
   translationSelectionMode: "DanbooruTagJPAssist.TranslationSelectionMode",
   tagFiles: "DanbooruTagJPAssist.TagFiles",
   translationFiles: "DanbooruTagJPAssist.TranslationFiles",
-  autoUpdateHf: "DanbooruTagJPAssist.AutoUpdateHf",
 };
 const DEFAULTS = {
   behavior: "existing",
@@ -48,6 +50,7 @@ const DEFAULTS = {
   enabled: true,
   maxSuggestions: 10,
   showAll: true,
+  usageRanking: false,
   autoComma: true,
   preserveFormatting: true,
   showJapanese: true,
@@ -62,14 +65,15 @@ const DEFAULTS = {
   translationSelectionMode: "selected",
   tagFiles: [],
   translationFiles: [],
-  autoUpdateHf: true,
 };
 const resultCache = new Map();
 const scheduledNodeScans = new WeakSet();
 let fileListCache = null;
 let activeAutocomplete = null;
 let formattingActive = false;
-let globalDismissInstalled = false;
+const observedDocuments = new WeakSet();
+const iframeBindings = new WeakMap();
+const nodeIframes = new WeakMap();
 let settingsRevision = 0;
 let dictionaryRevision = null;
 const controllers = new Set();
@@ -78,6 +82,8 @@ const nodeControllers = new WeakMap();
 const removedNodes = new WeakSet();
 const nodes = new Set();
 const fileSelectionEditors = new Set();
+const legacyEditors = new Set();
+const usageHistory = createUsageHistory({onChange: invalidateResults});
 
 function invalidateResults() {
   settingsRevision += 1;
@@ -91,11 +97,15 @@ const APPEARANCE_ONLY_SETTINGS = new Set([
 ]);
 
 function addSetting(definition) {
-  app.ui?.settings?.addSetting?.({ ...definition, onChange: () => {
+  addLocalizedSetting(app, { ...definition, onChange: () => {
     if (APPEARANCE_ONLY_SETTINGS.has(definition.id)) {
       for (const controller of controllers) controller.refreshAppearance();
     } else {
       invalidateResults();
+    }
+    if ([SETTINGS.tagSelectionMode, SETTINGS.translationSelectionMode, SETTINGS.tagFiles, SETTINGS.translationFiles].includes(definition.id)) {
+      for (const editor of fileSelectionEditors) if (editor.root.isConnected) editor.refreshCurrent();
+      for (const editor of legacyEditors) if (editor.root.isConnected) editor.refresh();
     }
   }});
 }
@@ -127,9 +137,13 @@ async function loadTags(context, signal, valid) {
     resultCache.clear();
     for (const controller of controllers) controller.hide();
   }
-  const key = JSON.stringify([dictionaryRevision, ...params.entries()]);
+  const useHistory = !!getSetting(SETTINGS.usageRanking, DEFAULTS.usageRanking) && stamp.usage_ranking === true;
+  const usage = useHistory ? usageHistory.entries() : [];
+  const key = JSON.stringify([dictionaryRevision, usage, ...params.entries()]);
   if (resultCache.has(key)) return resultCache.get(key);
-  const data = await fetchFirstJson(API_URLS, params, {signal});
+  const data = await fetchFirstJson(useHistory ? [API_URLS[0]] : API_URLS, params, useHistory
+    ? {signal, method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({usage})}
+    : {signal});
   if (!valid() || data.retry || data.revision !== dictionaryRevision) return [];
   if (!Array.isArray(data.tags)) throw new Error("Invalid JP Assist response");
   if (!data.errors?.length) {
@@ -157,6 +171,7 @@ async function loadFileList() {
         tag_files: Array.isArray(data.tag_files) ? data.tag_files : ["All"],
         translation_files: Array.isArray(data.translation_files) ? data.translation_files : ["All"],
         ordered_selection: data.ordered_selection === true,
+        usage_ranking: data.usage_ranking === true,
       })).catch(() => {
         fileListCache = null;
         return {tag_files: ["All"], translation_files: ["All"]};
@@ -185,7 +200,9 @@ function addFileSelection(kind, files) {
       root.style.cssText = "min-width:280px;width:100%;max-width:480px";
       let selected = orderedNames(value ?? DEFAULTS[`${kind}Files`]);
       for (const existing of fileSelectionEditors) if (!existing.root.isConnected) fileSelectionEditors.delete(existing);
-      const editor = {root, refresh: updated => {
+      const editor = {root, refreshCurrent: () => {
+        selected = orderedNames(getSetting(id, selected)); render();
+      }, refresh: updated => {
         files = updated;
         if (getSetting(id, null) === null) selected = orderedNames(DEFAULTS[`${kind}Files`]);
         render();
@@ -194,13 +211,33 @@ function addFileSelection(kind, files) {
       const save = next => {selected = next; setter([...selected]); render();};
       function render() {
         root.replaceChildren();
+        const legacy = getSetting(SETTINGS[`${kind}SelectionMode`], DEFAULTS[`${kind}SelectionMode`]) === "legacy";
         const help = document.createElement("p");
-        help.textContent = files.ordered_selection
-          ? `Used in Selected CSVs only mode. First selected wins. Empty: no ${kind === "tag" ? "suggestions" : "translations"}.`
-          : "Restart ComfyUI to enable selected CSVs.";
+        help.textContent = legacy ? uiText(app, "Legacy mode is active. This checklist is not used.", "従来モードを使用中。このチェックリストは使われていません。") : files.ordered_selection
+          ? uiText(app, `Used in Selected CSVs only mode. First selected wins. Empty: no ${kind === "tag" ? "suggestions" : "translations"}.`, `「選択したCSVのみ」モードで使用。上から順に優先。未選択なら${kind === "tag" ? "候補なし" : "翻訳なし"}。`)
+          : uiText(app, "Restart ComfyUI to enable selected CSVs.", "複数CSV選択にはComfyUIの再起動が必要です。");
         help.style.cssText = "margin:0 0 6px;color:var(--descrip-text,#aaa);font-size:12px";
         root.append(help);
         const available = orderedNames(files[`${kind}_files`]);
+        const actions = document.createElement("div");
+        actions.style.cssText = "display:flex;gap:6px;margin-bottom:6px";
+        for (const [en, ja, action] of legacy ? [
+          ["Use selected CSVs", "選択したCSVを使う", () => savePreference(SETTINGS[`${kind}SelectionMode`], "selected")],
+        ] : [
+          ["Select all", "すべて選択", () => save([...selected, ...available.filter(name => !selected.includes(name))])],
+          ["Clear selection", "選択解除", () => save([])],
+        ]) {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.textContent = uiText(app, en, ja);
+          button.title = legacy ? uiText(app, "Switch to this ordered checklist without changing its selection.", "選択内容を変えず、このチェックリストを使用するモードに切り替えます。")
+            : en === "Select all" ? uiText(app, "Keep the current order and append all other available CSVs.", "現在の優先順を保ち、残りの利用可能なCSVを末尾に追加します。")
+              : uiText(app, "Uncheck every CSV. An empty selection stays empty.", "すべてのチェックを外します。空の選択はそのまま保持します。");
+          button.onclick = action;
+          button.disabled = !files.ordered_selection;
+          actions.append(button);
+        }
+        root.append(actions);
         const list = document.createElement("div");
         list.style.cssText = "max-height:150px;overflow:auto;border:1px solid var(--border-color,#555);border-radius:4px";
         for (const name of [...selected, ...available.filter(name => !selected.includes(name))]) {
@@ -212,10 +249,12 @@ function addFileSelection(kind, files) {
           const check = document.createElement("input");
           check.type = "checkbox";
           check.checked = index >= 0;
-          check.setAttribute("aria-label", `Select ${kind} CSV ${name}`);
+          check.disabled = legacy || !files.ordered_selection;
+          check.setAttribute("aria-label", uiText(app, `Select ${kind} CSV ${name}`, `${kind === "tag" ? "タグ" : "翻訳"}CSV ${name}を選択`));
+          check.title = uiText(app, "Check to use this CSV; uncheck to exclude it.", "チェックすると使用します。外すと検索対象から除外します。");
           check.addEventListener("change", () => save(check.checked ? [...selected, name] : selected.filter(item => item !== name)));
           const text = document.createElement("span");
-          text.textContent = `${index >= 0 ? `${index + 1}. ` : ""}${name}${available.includes(name) ? "" : " (unavailable)"}`;
+          text.textContent = `${index >= 0 ? `${index + 1}. ` : ""}${name}${available.includes(name) ? "" : uiText(app, " (unavailable)", "（ファイルなし）")}`;
           text.title = text.textContent;
           text.style.cssText = "overflow:hidden;text-overflow:ellipsis;white-space:nowrap";
           label.append(check, text);
@@ -224,9 +263,9 @@ function addFileSelection(kind, files) {
             const button = document.createElement("button");
             button.type = "button";
             button.textContent = arrow;
-            button.setAttribute("aria-label", `Move ${kind} CSV ${name} ${direction}`);
-            button.title = `Move ${direction}`;
-            button.disabled = index + delta < 0 || index + delta >= selected.length;
+            button.setAttribute("aria-label", uiText(app, `Move ${kind} CSV ${name} ${direction}`, `${name}の優先順位を${delta < 0 ? "上げる" : "下げる"}`));
+            button.title = uiText(app, `Move ${direction}`, `優先順位を${delta < 0 ? "上げる" : "下げる"}`);
+            button.disabled = legacy || !files.ordered_selection || index + delta < 0 || index + delta >= selected.length;
             button.addEventListener("click", () => {
               const next = [...selected];
               [next[index], next[index + delta]] = [next[index + delta], next[index]];
@@ -253,6 +292,62 @@ async function refreshFileSelections() {
     if (editor.root.isConnected) editor.refresh(files);
     else fileSelectionEditors.delete(editor);
   }
+  for (const editor of legacyEditors) if (editor.root.isConnected) editor.refresh(files);
+}
+
+async function savePreference(id, value) {
+  const settings = app.ui.settings;
+  if (settings.setSettingValueAsync) await settings.setSettingValueAsync(id, value);
+  else await settings.setSettingValue(id, value);
+}
+
+function addLegacySettings(files) {
+  addLocalizedSetting(app, {id: "DanbooruTagJPAssist.LegacyFiles", name: "Legacy CSV settings",
+    category: ["Danbooru Tag JP Assist", "Files", "Legacy CSV settings"], type: () => {
+      const root = document.createElement("details");
+      root.className = "jp-csv-legacy";
+      root.style.cssText = "min-width:280px;width:100%;max-width:480px";
+      root.open = ["tag", "translation"].some(kind => getSetting(SETTINGS[`${kind}SelectionMode`], DEFAULTS[`${kind}SelectionMode`]) === "legacy");
+      function render() {
+        root.replaceChildren();
+        const summary = document.createElement("summary");
+        summary.textContent = uiText(app, "Legacy CSV settings (compatibility)", "従来のCSV設定（互換用）");
+        summary.title = uiText(app, "Keep old All / single-file settings. The corresponding legacy mode must be enabled to use them.", "以前の「すべて／単一CSV」の設定です。使うには対象の従来モードを有効にします。");
+        root.append(summary);
+        for (const kind of ["tag", "translation"]) {
+          const legacy = getSetting(SETTINGS[`${kind}SelectionMode`], DEFAULTS[`${kind}SelectionMode`]) === "legacy";
+          const keys = kind === "tag" ? ["tagSelectionMode", "tagSource", "tagFile"] : ["translationSelectionMode", "translationFile"];
+          for (const key of keys) {
+            const definition = localizedDefinition(app, SETTINGS[key]);
+            const label = document.createElement("label");
+            label.style.cssText = "display:flex;flex-direction:column;gap:4px;margin:8px 0";
+            const text = document.createElement("span");
+            text.textContent = definition.name;
+            const select = document.createElement("select");
+            select.setAttribute("aria-label", definition.name);
+            label.title = select.title = definition.tooltip;
+            select.disabled = !key.endsWith("SelectionMode") && !legacy;
+            const current = getSetting(SETTINGS[key], DEFAULTS[key]);
+            const choices = key === "tagFile" || key === "translationFile"
+              ? [...orderedNames(files[`${kind}_files`]).map(name => ({value: name, text: name})), {value: "All", text: uiText(app, "All", "すべて")}]
+              : definition.options;
+            if (!choices.some(option => option.value === current)) choices.push({value: current, text: `${current}${uiText(app, " (unavailable)", "（ファイルなし）")}`});
+            for (const choice of choices) {
+              const option = document.createElement("option");
+              option.value = choice.value; option.textContent = choice.text;
+              select.append(option);
+            }
+            select.value = current;
+            select.onchange = async () => {await savePreference(SETTINGS[key], select.value); render();};
+            label.append(text, select); root.append(label);
+          }
+        }
+      }
+      for (const editor of legacyEditors) if (!editor.root.isConnected) legacyEditors.delete(editor);
+      legacyEditors.add({root, refresh: updated => {if (updated) files = updated; render();}});
+      render();
+      return root;
+    }});
 }
 
 function getSetting(id, fallback) {
@@ -311,9 +406,6 @@ function selectedTranslationFileName() {
   return String(getSetting(SETTINGS.translationFile, DEFAULTS.translationFile) || DEFAULTS.translationFile);
 }
 
-function autoUpdateHf() {
-  return !!getSetting(SETTINGS.autoUpdateHf, DEFAULTS.autoUpdateHf);
-}
 
 function popupTheme() {
   return String(getSetting(SETTINGS.popupTheme, DEFAULTS.popupTheme) || DEFAULTS.popupTheme);
@@ -336,11 +428,13 @@ function currentToken(textarea) {
 }
 
 function insertTag(textarea, token, item) {
+  const document = textarea.ownerDocument ?? globalThis.document;
   const edit = insertionEdit(token, item, {
     behavior: getSetting(SETTINGS.behavior, DEFAULTS.behavior),
     spacesForUnderscores: spacesForUnderscores(), preserveFormatting: preservePromptFormatting(),
     autoComma: autoComma(), exclusions: getSetting(SETTINGS.underscoreExclusions, ""),
   });
+  const expected = textarea.value.slice(0, edit.start) + edit.replacement + textarea.value.slice(edit.end);
   textarea.setSelectionRange(edit.start, edit.end);
   // Chromium's native edit command keeps a completion in the textarea undo history.
   const edited = document.execCommand("insertText", false, edit.replacement);
@@ -350,17 +444,22 @@ function insertTag(textarea, token, item) {
   }
   textarea.setSelectionRange(edit.caret, edit.caret);
   textarea.dispatchEvent(new Event("change", { bubbles: true }));
+  return textarea.value === expected;
+}
+
+function isTextarea(el) {
+  return el instanceof (el?.ownerDocument?.defaultView?.HTMLTextAreaElement ?? HTMLTextAreaElement);
 }
 
 function shouldAttach(el) {
-  if (!(el instanceof HTMLTextAreaElement)) return false;
+  if (!isTextarea(el)) return false;
   if (!el.isConnected) return false;
   if (el.readOnly || el.disabled) return false;
   if (el.closest(".jp-tag-ac-popup")) return false;
   return true;
 }
 
-function makePopup() {
+function makePopup(document = globalThis.document) {
   const popup = document.createElement("div");
   const colors = popupColors();
   popup.className = "jp-tag-ac-popup";
@@ -391,9 +490,9 @@ function splitAlias(item) {
     .filter(Boolean);
 }
 
-function ensureGlobalDismissHandler() {
-  if (globalDismissInstalled) return;
-  globalDismissInstalled = true;
+function ensureGlobalDismissHandler(document = globalThis.document, ownerNode = null) {
+  if (observedDocuments.has(document)) return;
+  observedDocuments.add(document);
   document.addEventListener("mousedown", (ev) => {
     const current = activeAutocomplete;
     if (current && !current.popup.contains(ev.target)) current.invalidate();
@@ -403,19 +502,27 @@ function ensureGlobalDismissHandler() {
   });
   new MutationObserver(records => {
     for (const controller of controllers) {
-      if (!controller.textarea.isConnected) controller.destroy();
+      if (!controller.textarea.isConnected || (controller.frame && !controller.frame.isConnected)) controller.destroy();
     }
-    if (records.some(record => [...record.addedNodes].some(el => el instanceof HTMLTextAreaElement || (el instanceof Element && el.querySelector("textarea"))))) {
+    if (records.some(record => record.removedNodes?.length)) {
+      for (const node of nodes) for (const binding of [...(nodeIframes.get(node) ?? [])]) {
+        if (!binding.frame.isConnected) binding.destroy();
+      }
+    }
+    if (records.some(record => [...record.addedNodes].some(el => isTextarea(el) || el.tagName === "IFRAME" || el.querySelector?.("textarea,iframe")))) {
       // Batch delayed DOM widget discovery into one frame; nodeCreated and
       // loadedGraphNode still scan immediately to preserve normal attachment.
-      for (const node of nodes) scheduleNodeTextareaScan(node, true);
+      if (ownerNode) scheduleNodeTextareaScan(ownerNode, true);
+      else for (const node of nodes) scheduleNodeTextareaScan(node, true);
     }
   }).observe(document.body, {childList: true, subtree: true});
 }
 
 function attachAutocomplete(textarea, node) {
   if (!shouldAttach(textarea) || textareaControllers.has(textarea)) return;
-  const popup = makePopup();
+  const document = textarea.ownerDocument ?? globalThis.document;
+  const window = document.defaultView ?? globalThis.window;
+  const popup = makePopup(document);
   const listeners = new AbortController();
   const resize = installPopupResize(textarea, popup, {
     getHeight: () => getSetting(SETTINGS.popupHeight, DEFAULTS.popupHeight),
@@ -425,6 +532,7 @@ function attachAutocomplete(textarea, node) {
     },
     signal: listeners.signal,
   });
+  const candidateList = createCandidateList(popup, resize.handle, listeners.signal);
   // Keep scrollbar presses away from ComfyUI's outside-widget blur handler.
   popup.addEventListener("mousedown", ev => ev.stopPropagation(), {signal: listeners.signal});
   const listen = (type, handler) => textarea.addEventListener(type, handler, {signal: listeners.signal});
@@ -434,7 +542,6 @@ function attachAutocomplete(textarea, node) {
   let requestSerial = 0;
   let updateTimer = null;
   let request = null;
-  let rowElements = [];
   let composing = false;
   let committing = false;
   let destroyed = false;
@@ -443,11 +550,10 @@ function attachAutocomplete(textarea, node) {
   function hide() {
     resize.cancel();
     popup.style.display = "none";
-    popup.replaceChildren();
+    candidateList.clear();
     items = [];
     token = null;
     active = 0;
-    rowElements = [];
     if (activeAutocomplete === controller) activeAutocomplete = null;
   }
 
@@ -488,7 +594,9 @@ function attachAutocomplete(textarea, node) {
     // ComfyUI's document mousedown handler blurs widgets clicked from outside.
     if (event.type === "mousedown") event.stopPropagation();
     committing = true;
-    try { insertTag(textarea, token, item); }
+    try {
+      if (insertTag(textarea, token, item) && getSetting(SETTINGS.usageRanking, DEFAULTS.usageRanking)) usageHistory.record(item);
+    }
     finally { committing = false; invalidate(); }
   }
 
@@ -496,7 +604,7 @@ function attachAutocomplete(textarea, node) {
     if (!destroyed && items.length && popup.style.display !== "none") {render(); resize.place();}
   }
 
-  const controller = {textarea, node, popup, hide, invalidate, destroy, selectionChanged, refreshAppearance};
+  const controller = {textarea, node, frame: window.frameElement, popup, hide, invalidate, destroy, selectionChanged, refreshAppearance};
   controllers.add(controller);
   textareaControllers.set(textarea, controller);
   if (!nodeControllers.has(node)) nodeControllers.set(node, new Set());
@@ -504,54 +612,59 @@ function attachAutocomplete(textarea, node) {
   ensureGlobalDismissHandler();
 
   function render() {
-    popup.replaceChildren();
-    rowElements = [];
     const colors = popupColors();
-    const fragment = document.createDocumentFragment();
     popup.style.borderColor = colors.border;
-    items.forEach((item, index) => {
+    const showJP = showJapanese();
+    const type = getSetting(SETTINGS.showSourceType, false);
+    const file = getSetting(SETTINGS.showSourceFile, false);
+    const count = getSetting(SETTINGS.showPostCount, false);
+    const views = items.map(item => {
+      const labels = [];
+      const meta = item.meta ?? {};
+      if (type) labels.push(({tag: "TAG", natural_language: "NL", custom: "CUSTOM"})[meta.source_type] ?? "?");
+      if (file && meta.source_file) labels.push(meta.source_file);
+      if (count) labels.push(meta.post_count === null || meta.post_count === undefined ? "Posts: unknown" : `Posts: ${meta.post_count}`);
+      return {info: labels.join(" · "), aliases: showJP ? splitAlias(item).join(", ") : ""};
+    });
+    candidateList.setItems(items.length, index => `${!!views[index].info}:${!!views[index].aliases}`, index => {
+      const item = items[index];
+      const view = views[index];
       const row = document.createElement("div");
       row.style.cssText = `display:block;padding:6px 8px;cursor:pointer;background:${index === active ? colors.active : "transparent"}`;
       const tag = document.createElement("span");
       tag.textContent = item.tag;
       tag.style.cssText = "display:block;font-weight:700;color:#fff;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
       row.append(tag);
-      const labels = [];
-      const meta = item.meta ?? {};
-      if (getSetting(SETTINGS.showSourceType, false)) labels.push(({tag: "TAG", natural_language: "NL", custom: "CUSTOM"})[meta.source_type] ?? "?");
-      if (getSetting(SETTINGS.showSourceFile, false) && meta.source_file) labels.push(meta.source_file);
-      if (getSetting(SETTINGS.showPostCount, false)) labels.push(meta.post_count === null || meta.post_count === undefined ? "Posts: unknown" : `Posts: ${meta.post_count}`);
-      if (labels.length) {
+      if (view.info) {
         const info = document.createElement("span");
-        info.textContent = labels.join(" · ");
+        info.textContent = view.info;
         info.title = info.textContent;
         info.style.cssText = "display:block;color:#aaa;font-size:11px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis";
         row.append(info);
       }
-      const aliases = splitAlias(item).join(", ");
-      if (showJapanese() && aliases) {
+      if (view.aliases) {
         const ja = document.createElement("span");
-        ja.textContent = aliases;
-        ja.title = aliases;
+        ja.textContent = view.aliases;
+        ja.title = view.aliases;
         ja.style.cssText = "display:block;color:#bde;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin-top:2px";
         row.append(ja);
       }
       row.addEventListener("mousedown", ev => commit(item, ev));
-      rowElements.push(row);
-      fragment.append(row);
+      return row;
     });
-    popup.append(fragment);
-    popup.append(resize.handle);
   }
 
   function setActive(index) {
     const next = Math.max(0, Math.min(items.length - 1, index));
     if (next === active) return;
-    if (rowElements[active]) rowElements[active].style.background = "transparent";
+    const previous = candidateList.row(active);
+    if (previous) previous.style.background = "transparent";
     active = next;
-    if (rowElements[next]) {
-      rowElements[next].style.background = popupColors().active;
-      rowElements[next].scrollIntoView?.({block: "nearest"});
+    candidateList.reveal(next);
+    const row = candidateList.row(next);
+    if (row) {
+      row.style.background = popupColors().active;
+      row.scrollIntoView?.({block: "nearest"});
     }
   }
 
@@ -578,6 +691,7 @@ function attachAutocomplete(textarea, node) {
       render();
       popup.scrollTop = 0;
       resize.place();
+      candidateList.refresh();
     } catch (error) {
       if (valid()) hide();
       if (error.name !== "AbortError") console.debug("JP Assist search unavailable", error.message);
@@ -604,13 +718,22 @@ function attachAutocomplete(textarea, node) {
       resize.place();
     }
   };
+  let repositionPending = false;
+  const scheduleReposition = () => {
+    if (destroyed || !items.length || repositionPending) return;
+    repositionPending = true;
+    requestAnimationFrame(() => {
+      repositionPending = false;
+      reposition();
+    });
+  };
   listen("scroll", reposition);
   window.addEventListener("resize", reposition, {signal: listeners.signal});
   window.addEventListener("wheel", ev => {
-    if (!popup.contains(ev.target)) requestAnimationFrame(reposition);
+    if (!popup.contains(ev.target)) scheduleReposition();
   }, {passive: true, signal: listeners.signal});
   window.addEventListener("pointermove", ev => {
-    if (ev.buttons && !popup.contains(ev.target)) requestAnimationFrame(reposition);
+    if (ev.buttons && !popup.contains(ev.target)) scheduleReposition();
   }, {signal: listeners.signal});
   // Capture page/panel scrolling, but do not relayout when the candidate list scrolls.
   document.addEventListener("scroll", ev => {
@@ -638,15 +761,50 @@ function attachAutocomplete(textarea, node) {
       commit(items[active], ev);
     }
   });
+  // A newly rendered card can receive focus/input before the batched scan.
+  if (document.activeElement === textarea) scheduleUpdate();
+}
+
+function attachIframe(frame, node) {
+  const existing = iframeBindings.get(frame);
+  if (existing) { existing.scan(); return; }
+  let currentDocument = null;
+  const clearDocument = () => {
+    for (const controller of [...(nodeControllers.get(node) ?? [])]) {
+      if (controller.textarea.ownerDocument === currentDocument) controller.destroy();
+    }
+  };
+  const scan = () => {
+    // Cross-origin frames are intentionally inaccessible and are skipped.
+    let document;
+    try { document = frame.contentDocument; } catch { document = null; }
+    if (currentDocument && currentDocument !== document) clearDocument();
+    currentDocument = document;
+    if (!document?.body) return;
+    ensureGlobalDismissHandler(document, node);
+    attachTextareasInElement(document.body, node);
+  };
+  const binding = {frame, scan, destroy() {
+    frame.removeEventListener("load", scan);
+    clearDocument();
+    iframeBindings.delete(frame);
+    nodeIframes.get(node)?.delete(binding);
+  }};
+  iframeBindings.set(frame, binding);
+  nodeIframes.get(node)?.add(binding);
+  frame.addEventListener("load", scan);
+  scan();
 }
 
 function attachTextareasInElement(el, node) {
-  if (el instanceof HTMLTextAreaElement) {
+  if (isTextarea(el)) {
     attachAutocomplete(el, node);
     return;
   }
-  if (!(el instanceof Element)) return;
+  if (!(el instanceof (el?.ownerDocument?.defaultView?.Element ?? Element))) return;
+  if (el.tagName === "IFRAME") { attachIframe(el, node); return; }
   el.querySelectorAll("textarea").forEach(textarea => attachAutocomplete(textarea, node));
+  el.querySelectorAll("iframe").forEach(frame => attachIframe(frame, node));
 }
 
 function attachNodeTextareas(node) {
@@ -661,11 +819,13 @@ function scheduleNodeTextareaScan(node, frameOnly = false) {
   nodes.add(node);
   if (!nodeControllers.has(node)) {
     nodeControllers.set(node, new Set());
+    nodeIframes.set(node, new Set());
     const onRemoved = node.onRemoved;
     node.onRemoved = function (...args) {
       removedNodes.add(this);
       nodes.delete(this);
       for (const controller of [...(nodeControllers.get(this) ?? [])]) controller.destroy();
+      for (const binding of [...(nodeIframes.get(this) ?? [])]) binding.destroy();
       return onRemoved?.apply(this, args);
     };
   }
@@ -695,6 +855,7 @@ async function addSettings() {
     options: [{value: "existing", text: "Existing"}, {value: "csv", text: "CSV-aware"}], defaultValue: "existing",
   });
   for (const [key, name, group] of [
+    ["usageRanking", "Prioritize frequently used candidates", "Autocomplete"],
     ["searchJapanese", "Use JP aliases for search", "Autocomplete"],
     ["showSourceType", "Show TAG / NL / CUSTOM", "Display"],
     ["showSourceFile", "Show source CSV", "Display"],
@@ -703,9 +864,17 @@ async function addSettings() {
   addSetting({id: SETTINGS.underscoreExclusions, name: "Underscore exclusions", type: "text",
     category: ["Danbooru Tag JP Assist", "Insert", "Underscore exclusions"], defaultValue: "",
   });
-  app.ui?.settings?.addSetting?.({id: "DanbooruTagJPAssist.ReloadDictionaries", name: "Reload dictionaries", type: () => {
+  addLocalizedSetting(app, {id: "DanbooruTagJPAssist.ReloadDictionaries", name: "Reload dictionaries", type: () => {
     const button = document.createElement("button");
-    button.textContent = "Reload dictionaries";
+    let status = "ready";
+    const updateButton = () => {
+      button.textContent = status === "done" ? uiText(app, "Dictionaries reloaded", "辞書を再読み込みしました")
+        : status === "failed" ? uiText(app, "Reload failed — retry", "再読み込み失敗・再試行")
+        : uiText(app, "Reload dictionaries", "辞書を再読み込み");
+      button.title = uiText(app, "Reload local CSVs and clear search caches. No download or restart.", "ローカルCSVと検索キャッシュを更新します。ダウンロード・再起動はしません。");
+    };
+    updateButton();
+    onLocaleChange(app, () => {if (button.isConnected) updateButton();});
     button.className = "p-button p-component";
     button.onclick = async () => {
       button.disabled = true;
@@ -714,13 +883,44 @@ async function addSettings() {
         await fetchFirstJson(["/danbooru-tag-jp-assist/reload"], null, {method: "POST"});
         dictionaryRevision = null;
         await refreshFileSelections();
-        button.textContent = "Dictionaries reloaded";
-      } catch { button.textContent = "Reload failed — retry"; }
+        status = "done"; updateButton();
+      } catch { status = "failed"; updateButton(); }
       finally { button.disabled = false; }
     };
     return button;
   }, category: ["Danbooru Tag JP Assist", "Files", "Reload dictionaries"]});
+  onLocaleChange(app, () => {
+    for (const editor of fileSelectionEditors) {
+      if (editor.root.isConnected) editor.refreshCurrent();
+      else fileSelectionEditors.delete(editor);
+    }
+    for (const editor of legacyEditors) {
+      if (editor.root.isConnected) editor.refresh();
+      else legacyEditors.delete(editor);
+    }
+  });
   const files = await loadFileList();
+  addLocalizedSetting(app, {id: "DanbooruTagJPAssist.ClearUsageHistory", name: "Clear usage history",
+    category: ["Danbooru Tag JP Assist", "Autocomplete", "Clear usage history"], type: () => {
+      const root = document.createElement("div");
+      const button = document.createElement("button");
+      button.type = "button";
+      let cleared = false;
+      const update = () => {
+        button.textContent = cleared ? uiText(app, "Usage history cleared", "使用履歴を消去しました") : uiText(app, "Clear usage history", "使用履歴を消去");
+        button.title = localizedDefinition(app, "DanbooruTagJPAssist.ClearUsageHistory").tooltip;
+      };
+      button.onclick = () => {usageHistory.clear(); cleared = true; update();};
+      update(); root.append(button);
+      const help = document.createElement("p");
+      const updateHelp = () => {
+        help.textContent = files.usage_ranking ? uiText(app, "Saved in this browser for this ComfyUI address.", "履歴はこのブラウザー・ComfyUI接続先ごとに保存します。")
+          : uiText(app, "Usage ranking needs the updated server on your next restart. Normal completion remains available.", "使用頻度による順位付けは次回のComfyUI再起動後に有効です。通常の補完は使えます。");
+      };
+      updateHelp(); help.style.cssText = "font-size:12px;color:var(--descrip-text,#aaa)"; root.append(help);
+      onLocaleChange(app, () => {if (root.isConnected) {update(); updateHelp();}});
+      return root;
+    }});
   const tagFiles = Array.isArray(files.tag_files) && files.tag_files.length ? files.tag_files : ["All"];
   const translationFiles = Array.isArray(files.translation_files) && files.translation_files.length ? files.translation_files : ["All"];
   DEFAULTS.tagFiles = defaultTagFiles(tagFiles);
@@ -744,7 +944,7 @@ async function addSettings() {
     id: SETTINGS.tagSource,
     name: "Tag source",
     category: ["Danbooru Tag JP Assist", "Autocomplete", "Tag source"],
-    type: "combo",
+    type: "hidden",
     options: [
       { value: "hf", text: "Hugging Face" },
       { value: "own", text: "Own tag file" },
@@ -756,7 +956,7 @@ async function addSettings() {
     id: SETTINGS.tagFile,
     name: "1. Tag file (priority)",
     category: ["Danbooru Tag JP Assist", "Files", "1. Tag file"],
-    type: "combo",
+    type: "hidden",
     options: tagFiles.map((name) => ({ value: name, text: name })),
     defaultValue: DEFAULTS.tagFile,
   });
@@ -764,26 +964,20 @@ async function addSettings() {
     id: SETTINGS.translationFile,
     name: "2. Translation file",
     category: ["Danbooru Tag JP Assist", "Files", "2. Translation file"],
-    type: "combo",
+    type: "hidden",
     options: translationFiles.map((name) => ({ value: name, text: name })),
     defaultValue: DEFAULTS.translationFile,
-  });
-  addSetting({
-    id: SETTINGS.autoUpdateHf,
-    name: "3. Update Danbooru CSV from Hugging Face",
-    category: ["Danbooru Tag JP Assist", "Files", "3. Danbooru CSV update"],
-    type: "boolean",
-    defaultValue: DEFAULTS.autoUpdateHf,
   });
   for (const kind of ["translation", "tag"]) {
     addFileSelection(kind, files);
     addSetting({
-      id: SETTINGS[`${kind}SelectionMode`], name: `${kind === "tag" ? "Tag" : "Translation"} selection mode`, type: "combo",
+      id: SETTINGS[`${kind}SelectionMode`], name: `${kind === "tag" ? "Tag" : "Translation"} selection mode`, type: "hidden",
       category: ["Danbooru Tag JP Assist", "Files", `${kind} selection mode`],
       options: [{value: "legacy", text: kind === "tag" ? "All / single priority" : "All / single file"}, {value: "selected", text: "Selected CSVs only"}],
       defaultValue: DEFAULTS[`${kind}SelectionMode`],
     });
   }
+  addLegacySettings(files);
   addSetting({
     id: SETTINGS.popupTheme,
     name: "Popup color",
@@ -847,18 +1041,6 @@ async function addSettings() {
   });
 }
 
-async function maybeUpdateHfFile() {
-  if (!autoUpdateHf()) return;
-  try {
-    await fetchFirstJson(HF_UPDATE_API_URLS, null, { method: "POST" });
-    fileListCache = null;
-    dictionaryRevision = null;
-    invalidateResults();
-  } catch {
-    // Network or server errors should not block normal autocomplete use.
-  }
-}
-
 app.registerExtension({
   name: EXT_NAME,
   setup() {
@@ -871,8 +1053,6 @@ app.registerExtension({
   async init() {
     ensureGlobalDismissHandler();
     await addSettings();
-    // Remote CSV refresh can take seconds; do not block the extension UI on it.
-    void maybeUpdateHfFile();
   },
   nodeCreated(node) {
     removedNodes.delete(node);
